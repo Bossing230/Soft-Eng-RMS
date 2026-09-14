@@ -1,13 +1,15 @@
-# Backend
-backend/node_modules/
-backend/.env
-
-# Flutter
-frontend/build/
-frontend/.dart_tool/
-frontend/.packages
-frontend/pubspec.lock
-
+# Matches node_modules and .env no matter which folder they're in —
+# safer than hardcoding "backend/" when the real folder is "lib/Backend"
+**/node_modules/
+**/.env
+ 
+# Flutter build artifacts, wherever the Flutter project actually lives
+**/build/
+**/.dart_tool/
+**/.packages
+**/pubspec.lock
+ 
 # General
 .DS_Store
 *.log
+ 
