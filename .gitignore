@@ -1,0 +1,13 @@
+# Backend
+backend/node_modules/
+backend/.env
+
+# Flutter
+frontend/build/
+frontend/.dart_tool/
+frontend/.packages
+frontend/pubspec.lock
+
+# General
+.DS_Store
+*.log
