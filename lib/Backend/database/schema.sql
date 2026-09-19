@@ -196,6 +196,15 @@ WHERE r.role_name = 'kitchen' AND p.permission_name IN
 
 ALTER TABLE employees ADD COLUMN profile_image VARCHAR(255) NULL AFTER email;
 
+CREATE TABLE IF NOT EXISTS attendance (
+  attendance_id INT AUTO_INCREMENT PRIMARY KEY,
+  employee_id INT NOT NULL,
+  clock_in DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  clock_out DATETIME NULL,
+  break_started_at DATETIME NULL,
+  FOREIGN KEY (employee_id) REFERENCES employees(employee_id),
+  INDEX idx_attendance_open (employee_id, clock_out)
+);
 -- The default administrator account is created by running `npm run seed`
 -- (see database/seed.js) so the password is hashed correctly with bcrypt
 -- instead of a hardcoded hash sitting in version control.

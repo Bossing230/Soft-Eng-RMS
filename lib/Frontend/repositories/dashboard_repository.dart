@@ -8,6 +8,13 @@ class DashboardRepository {
     return Map<String, dynamic>.from(data);
   }
 
+  /// Everything the manager dashboard shows, in one request: today's numbers,
+  /// staff counts, the 7-day trend, top sellers, staff activity and alerts.
+  Future<Map<String, dynamic>> getManagerOverview() async {
+    final data = await _api.get('/reports/manager-overview');
+    return Map<String, dynamic>.from(data);
+  }
+
   /// Daily order-count/total-sales rows between two dates (inclusive),
   /// used to draw the revenue bar chart.
   Future<List<Map<String, dynamic>>> getSalesTrend({required String start, required String end}) async {
