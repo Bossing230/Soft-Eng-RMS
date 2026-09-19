@@ -15,6 +15,13 @@ class DashboardRepository {
     return Map<String, dynamic>.from(data);
   }
 
+  /// Everything the Reports page shows for one period ('daily', 'weekly' or
+  /// 'monthly'): summary numbers, revenue/order buckets and top sellers.
+  Future<Map<String, dynamic>> getReportsAnalytics({required String period}) async {
+    final data = await _api.get('/reports/analytics', query: {'period': period});
+    return Map<String, dynamic>.from(data);
+  }
+
   /// Daily order-count/total-sales rows between two dates (inclusive),
   /// used to draw the revenue bar chart.
   Future<List<Map<String, dynamic>>> getSalesTrend({required String start, required String end}) async {
