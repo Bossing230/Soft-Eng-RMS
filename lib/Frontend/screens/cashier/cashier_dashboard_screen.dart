@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:rms/Frontend/screens/shared/order_maangement_page.dart';
+import 'package:rms/Frontend/screens/shared/order_management_page.dart';
 import '../shared/role_scaffold.dart';
 import '../shared/dashboard_overview_page.dart';
 import '../shared/reservation_page.dart';

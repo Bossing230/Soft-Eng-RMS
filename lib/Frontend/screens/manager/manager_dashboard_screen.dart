@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:rms/Frontend/screens/manager/menu_management_page.dart';
-import 'package:rms/Frontend/screens/shared/order_maangement_page.dart';
+import 'package:rms/Frontend/screens/shared/order_management_page.dart';
 import 'package:rms/Frontend/screens/shared/report_page.dart';
 import '../shared/role_scaffold.dart';
 import 'manager_overview_page.dart';

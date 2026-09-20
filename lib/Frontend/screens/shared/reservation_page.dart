@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:rms/Frontend/models/reservations.dart';
-import 'package:rms/Frontend/repositories/reservation_repositoriy.dart';
+import 'package:rms/Frontend/repositories/reservation_repository.dart';
 import '../../models/dining_table.dart';
 import '../../widgets/reservation_card.dart';
 
