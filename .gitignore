@@ -12,4 +12,16 @@
 # General
 .DS_Store
 *.log
- 
+
+# Build output, dependencies and editor files
+.dart_tool/
+build/
+node_modules/
+.idea/
+*.iml
+flutter_*.log
+
+# Secrets
+.env
+.env.*
+!.env.example 
