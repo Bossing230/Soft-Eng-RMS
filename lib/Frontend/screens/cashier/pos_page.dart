@@ -28,13 +28,21 @@ class _PosPageState extends State<PosPage> {
 
   List<MenuItem> _menu = [];
   final Map<int, CartLine> _cart = {};
+  String _orderType = 'dine_in'; // dine_in | takeout | delivery
   bool _loading = true;
+  bool _submitting = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
     _load();
+  }
+
+  @override
+  void dispose() {
+    _tableNumberCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -69,19 +77,40 @@ class _PosPageState extends State<PosPage> {
 
   double get _cartTotal => _cart.values.fold(0.0, (sum, l) => sum + l.subtotal);
 
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   Future<void> _submitOrder() async {
-    if (_cart.isEmpty) return;
+    if (_cart.isEmpty || _submitting) return;
+
+    final table = _tableNumberCtrl.text.trim();
+    if (_orderType == 'dine_in' && table.isEmpty) {
+      _snack('Enter the table number for a dine-in order.');
+      return;
+    }
+
+    setState(() => _submitting = true);
     try {
       final order = await _orderRepo.create(
-        tableId: null, // table linking can be added once a table picker is wired to `tables` endpoint
+        orderType: _orderType,
+        tableNumber: _orderType == 'dine_in' ? table : null,
         items: _cart.values.map((l) => {'menuId': l.item.menuId, 'quantity': l.quantity}).toList(),
       );
-      setState(() => _cart.clear());
+      setState(() {
+        _cart.clear();
+        _tableNumberCtrl.clear();
+      });
       if (mounted) {
         Navigator.of(context).push(MaterialPageRoute(builder: (_) => CheckoutPage(order: order)));
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.message)));
+      _snack(e.message);
+    } catch (e) {
+      _snack('Could not send the order: $e');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -120,12 +149,27 @@ class _PosPageState extends State<PosPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Padding(
-          padding: const EdgeInsets.all(12),
-          child: TextField(
-            controller: _tableNumberCtrl,
-            decoration: const InputDecoration(labelText: 'Table (optional — walk-in if blank)'),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+          child: SegmentedButton<String>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: 'dine_in', label: Text('Dine-in')),
+              ButtonSegment(value: 'takeout', label: Text('Takeout')),
+              ButtonSegment(value: 'delivery', label: Text('Delivery')),
+            ],
+            selected: {_orderType},
+            onSelectionChanged: (s) => setState(() => _orderType = s.first),
           ),
         ),
+        if (_orderType == 'dine_in')
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: TextField(
+              controller: _tableNumberCtrl,
+              decoration: const InputDecoration(labelText: 'Table number (for example 3 or T3)'),
+            ),
+          ),
+        const SizedBox(height: 12),
         Expanded(
           child: _cart.isEmpty
               ? const Center(child: Text('Cart is empty. Tap a menu item to add it.'))
@@ -162,8 +206,10 @@ class _PosPageState extends State<PosPage> {
               const Text('Tax & service charge are applied at checkout', style: TextStyle(fontSize: 11, color: Colors.grey)),
               const SizedBox(height: 12),
               ElevatedButton(
-                onPressed: _cart.isEmpty ? null : _submitOrder,
-                child: const Text('Send Order to Kitchen'),
+                onPressed: (_cart.isEmpty || _submitting) ? null : _submitOrder,
+                child: _submitting
+                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Send Order to Kitchen'),
               ),
             ],
           ),

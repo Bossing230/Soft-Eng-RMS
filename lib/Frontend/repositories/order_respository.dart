@@ -12,6 +12,13 @@ class OrderRepository {
     return (data as List).map((e) => RmsOrder.fromJson(e)).toList();
   }
 
+  /// The Orders page: today's orders plus anything still open, newest first.
+  /// Each order says which statuses the signed-in user may move it to.
+  Future<List<RmsOrder>> getBoard() async {
+    final data = await _api.get('/orders/board');
+    return (data as List).map((e) => RmsOrder.fromJson(e)).toList();
+  }
+
   Future<List<RmsOrder>> getKitchenQueue() async {
     final data = await _api.get('/orders/kitchen-queue');
     return (data as List).map((e) => RmsOrder.fromJson(e)).toList();
@@ -22,9 +29,19 @@ class OrderRepository {
     return RmsOrder.fromJson(data);
   }
 
-  Future<RmsOrder> create({int? tableId, required List<Map<String, dynamic>> items, double discount = 0}) async {
+  /// [orderType] is 'dine_in', 'takeout' or 'delivery'. [tableNumber] only
+  /// applies to dine-in orders ("3" and "T3" both find table T3).
+  Future<RmsOrder> create({
+    int? tableId,
+    String? tableNumber,
+    String orderType = 'dine_in',
+    required List<Map<String, dynamic>> items,
+    double discount = 0,
+  }) async {
     final data = await _api.post('/orders', body: {
       'tableId': tableId,
+      if (tableNumber != null && tableNumber.trim().isNotEmpty) 'tableNumber': tableNumber.trim(),
+      'orderType': orderType,
       'items': items, // [{ menuId, quantity }]
       'discount': discount,
     });
