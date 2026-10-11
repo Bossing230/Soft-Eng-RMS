@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:rms/Frontend/models/menu.dart';
 import 'package:rms/Frontend/repositories/order_repository.dart';
 import 'package:rms/Frontend/services/api_services.dart';
+
 import '../../repositories/menu_repository.dart';
 import '../../repositories/table_repository.dart';
 
@@ -35,7 +36,14 @@ class CartLine {
 /// table, browse and search the available menu, build a cart, then place
 /// the order and take payment, all on one page.
 class PosPage extends StatefulWidget {
-  const PosPage({super.key});
+  /// When set (opened from the Tables page for one specific table), the order
+  /// type locks to dine-in and that table is preselected — including when the
+  /// table is already occupied, so a cashier can add another order to a table
+  /// that is already seated.
+  final int? initialTableId;
+  final String? initialTableNumber;
+
+  const PosPage({super.key, this.initialTableId, this.initialTableNumber});
 
   @override
   State<PosPage> createState() => _PosPageState();
@@ -72,6 +80,10 @@ class _PosPageState extends State<PosPage> {
   @override
   void initState() {
     super.initState();
+    if (widget.initialTableId != null) {
+      _orderType = 'dine_in';
+      _selectedTableId = widget.initialTableId;
+    }
     _load();
   }
 
@@ -88,10 +100,13 @@ class _PosPageState extends State<PosPage> {
       _error = null;
     });
     try {
+      // With a preselected table (opened from the Tables page) it may already
+      // be occupied, so fetch every table and filter below instead of asking
+      // the server for only the available ones.
       final results = await Future.wait([
         _menuRepo.getAll(availability: 'available'),
         _menuRepo.getCategories(),
-        _tableRepo.getAll(status: 'available'),
+        _tableRepo.getAll(status: widget.initialTableId == null ? 'available' : null),
       ]);
       // Optional: if this fails (older backend), the defaults above still work.
       try {
@@ -122,6 +137,14 @@ class _PosPageState extends State<PosPage> {
   }
 
   // ---- menu / filtering ----
+
+  /// Tables offered in the dropdown: the available ones, plus the preselected
+  /// table even if it's occupied (so a second order can be added to it).
+  List<Map<String, dynamic>> get _tableOptions {
+    return _tables.where((t) {
+      return t['status'] == 'available' || t['table_id'] == widget.initialTableId;
+    }).toList();
+  }
 
   List<MenuItem> get _visibleMenu {
     final q = _query.trim().toLowerCase();
@@ -274,8 +297,8 @@ class _PosPageState extends State<PosPage> {
       children: [
         _TypeAndTableRow(
           orderType: _orderType,
-          onTypeChanged: _setOrderType,
-          tables: _tables,
+          onTypeChanged: widget.initialTableId == null ? _setOrderType : null,
+          tables: _tableOptions,
           selectedTableId: _selectedTableId,
           onTableChanged: (id) => setState(() => _selectedTableId = id),
         ),
@@ -377,7 +400,8 @@ class _PosPageState extends State<PosPage> {
 
 class _TypeAndTableRow extends StatelessWidget {
   final String orderType;
-  final ValueChanged<String> onTypeChanged;
+  /// Null when the order type is locked (opened from the Tables page for one table).
+  final ValueChanged<String>? onTypeChanged;
   final List<Map<String, dynamic>> tables;
   final int? selectedTableId;
   final ValueChanged<int?> onTableChanged;
@@ -393,17 +417,19 @@ class _TypeAndTableRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final locked = onTypeChanged == null;
     final pills = Wrap(
       spacing: 8,
       runSpacing: 8,
       children: _types.entries.map((e) {
         final selected = e.key == orderType;
+        if (locked && !selected) return const SizedBox.shrink();
         return Material(
           color: selected ? _Ui.tanDeep : _Ui.pillIdle,
           borderRadius: BorderRadius.circular(20),
           child: InkWell(
             borderRadius: BorderRadius.circular(20),
-            onTap: () => onTypeChanged(e.key),
+            onTap: locked ? null : () => onTypeChanged!(e.key),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
               child: Text(

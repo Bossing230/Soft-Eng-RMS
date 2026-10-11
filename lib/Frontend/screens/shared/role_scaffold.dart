@@ -11,7 +11,13 @@ class RoleNavItem {
   final String label;
   final IconData icon;
   final Widget page;
-  const RoleNavItem({required this.label, required this.icon, required this.page});
+
+  /// What the top bar shows while this tab is open. Defaults to [label] when
+  /// not given — only set this where the page's heading differs from its
+  /// short sidebar label (for example label 'POS', pageTitle 'Point of Sale').
+  final String? pageTitle;
+
+  const RoleNavItem({required this.label, required this.icon, required this.page, this.pageTitle});
 }
 
 class RoleScaffold extends StatefulWidget {
@@ -51,6 +57,15 @@ class _RoleScaffoldState extends State<RoleScaffold> {
   }
 
   int get _unreadCount => _notifications.where((n) => !n.isRead).length;
+
+  /// The Overview tab always reads "<Role> Dashboard"; every other tab shows
+  /// its own heading (its pageTitle, or its sidebar label if none was given) —
+  /// matching how every page design in this app labels its own top bar.
+  String get _topTitle {
+    if (_selected == 0) return '${widget.title} Dashboard';
+    final item = widget.items[_selected];
+    return item.pageTitle ?? item.label;
+  }
 
   String get _initials {
     final name = SessionManager().name?.trim() ?? '';
@@ -196,10 +211,6 @@ class _RoleScaffoldState extends State<RoleScaffold> {
     );
   }
 
-  // FIXED: this is a Column again (it had been accidentally changed to a
-  // Row, which tried to lay the logo, nav list, and logout button out
-  // side-by-side instead of stacked). The two logos now live in their
-  // own small Row, nested as a single item inside this Column.
   Widget _sidebarContent({required bool isDrawer}) {
     final primary = Theme.of(context).colorScheme.primary;
     return Column(
@@ -408,7 +419,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
       ),
       child: Row(
         children: [
-          Text('${widget.title} Dashboard', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+          Text(_topTitle, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
           const Spacer(),
           _notificationBell(),
           const SizedBox(width: 12),
@@ -444,7 +455,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('${widget.title} Dashboard'),
+        title: Text(_topTitle),
         actions: [
           _notificationBell(),
           const SizedBox(width: 8),
