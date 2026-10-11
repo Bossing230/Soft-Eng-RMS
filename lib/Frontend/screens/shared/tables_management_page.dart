@@ -14,7 +14,6 @@ class _Ui {
   static const pillIdle = Color(0xFFEFE9E0);
   static const ink = Color(0xFF2B2B2B);
   static const muted = Color(0xFF7A7A7A);
-  static const dialogBg = Color(0xFFF6E7DB);
 }
 
 class _StatusStyle {
