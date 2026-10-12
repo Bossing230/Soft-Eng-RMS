@@ -171,13 +171,13 @@ class _CashierSummaryPageState extends State<CashierSummaryPage> {
                 constraints: const BoxConstraints(maxWidth: 1200),
                 child: Column(
                   children: [
-                    // _StatCards(
-                    //   // mySalesToday: _asNum(mySales['today']),
-                    //   myOrdersToday: _asNum(mySales['ordersToday']).toInt(),
-                    //   pendingOrders: _asNum(d['pendingOrders']).toInt(),
-                    //   availableTables: _asNum(d['availableTables']).toInt(),
-                    //   // avgOrderValue: _asNum(d['avgOrderValue']),
-                    // ),
+                    _StatCards(
+                      mySalesToday: _asNum(mySales['today']).toDouble(),
+                      myOrdersToday: _asNum(mySales['ordersToday']).toInt(),
+                      pendingOrders: _asNum(d['pendingOrders']).toInt(),
+                      availableTables: _asNum(d['availableTables']).toInt(),
+                      avgOrderValue: _asNum(d['avgOrderValue']).toDouble(),
+                    ),
                     const SizedBox(height: 16),
                     const _QuickActions(),
                     const SizedBox(height: 16),
