@@ -22,6 +22,14 @@ class DashboardRepository {
     return Map<String, dynamic>.from(data);
   }
 
+  /// What the cashier's Summary tab shows: their own sales today, pending
+  /// orders system-wide, available tables, today's average order value, and
+  /// a handful of recent orders.
+  Future<Map<String, dynamic>> getCashierSummary() async {
+    final data = await _api.get('/reports/cashier-summary');
+    return Map<String, dynamic>.from(data);
+  }
+
   /// Daily order-count/total-sales rows between two dates (inclusive),
   /// used to draw the revenue bar chart.
   Future<List<Map<String, dynamic>>> getSalesTrend({required String start, required String end}) async {

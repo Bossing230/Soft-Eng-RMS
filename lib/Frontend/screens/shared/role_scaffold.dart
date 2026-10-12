@@ -20,6 +20,32 @@ class RoleNavItem {
   const RoleNavItem({required this.label, required this.icon, required this.page, this.pageTitle});
 }
 
+/// Carries the "switch to another tab" action down to whatever page is
+/// currently open inside a [RoleScaffold], so that page can jump to a
+/// sibling tab (e.g. a "View orders" quick action) without Navigator routes.
+class _RoleScaffoldScope extends InheritedWidget {
+  final void Function(String label) goToLabel;
+  const _RoleScaffoldScope({required this.goToLabel, required super.child});
+
+  static _RoleScaffoldScope? of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_RoleScaffoldScope>();
+
+  @override
+  bool updateShouldNotify(_RoleScaffoldScope oldWidget) => goToLabel != oldWidget.goToLabel;
+}
+
+/// Lets a page hosted inside [RoleScaffold] switch to a sibling tab by its
+/// sidebar label, e.g. `RoleScaffoldNavigator.goTo(context, 'Orders')`.
+/// Does nothing if there is no enclosing [RoleScaffold], or no tab with
+/// that label.
+class RoleScaffoldNavigator {
+  RoleScaffoldNavigator._();
+
+  static void goTo(BuildContext context, String label) {
+    _RoleScaffoldScope.of(context)?.goToLabel(label);
+  }
+}
+
 class RoleScaffold extends StatefulWidget {
   final String title;
   final List<RoleNavItem> items;
@@ -58,11 +84,10 @@ class _RoleScaffoldState extends State<RoleScaffold> {
 
   int get _unreadCount => _notifications.where((n) => !n.isRead).length;
 
-  /// The Overview tab always reads "<Role> Dashboard"; every other tab shows
-  /// its own heading (its pageTitle, or its sidebar label if none was given) —
+  /// Each tab's own heading: its pageTitle if it set one (e.g. the dashboard/
+  /// summary tab uses "<Role> Dashboard"), otherwise its sidebar label —
   /// matching how every page design in this app labels its own top bar.
   String get _topTitle {
-    if (_selected == 0) return '${widget.title} Dashboard';
     final item = widget.items[_selected];
     return item.pageTitle ?? item.label;
   }
@@ -432,7 +457,13 @@ class _RoleScaffoldState extends State<RoleScaffold> {
   @override
   Widget build(BuildContext context) {
     final isWide = MediaQuery.of(context).size.width >= 800;
-    final body = widget.items[_selected].page;
+    final body = _RoleScaffoldScope(
+      goToLabel: (label) {
+        final index = widget.items.indexWhere((i) => i.label == label);
+        if (index != -1) setState(() => _selected = index);
+      },
+      child: widget.items[_selected].page,
+    );
 
     if (isWide) {
       return Scaffold(

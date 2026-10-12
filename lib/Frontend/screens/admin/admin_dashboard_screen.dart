@@ -14,7 +14,12 @@ class AdminDashboardScreen extends StatelessWidget {
     return RoleScaffold(
       title: 'Administrator',
       items: const [
-        RoleNavItem(label: 'Overview', icon: Icons.dashboard, page: RichOverviewPage(isAdmin: true)),
+        RoleNavItem(
+          label: 'Overview',
+          icon: Icons.dashboard,
+          page: RichOverviewPage(isAdmin: true),
+          pageTitle: 'Administrator Dashboard',
+        ),
         RoleNavItem(label: 'Employees', icon: Icons.people, page: EmployeeManagementPage()),
         RoleNavItem(label: 'Menu', icon: Icons.restaurant_menu, page: MenuManagementPage()),
         RoleNavItem(label: 'Inventory', icon: Icons.inventory_2, page: InventoryManagementPage()),

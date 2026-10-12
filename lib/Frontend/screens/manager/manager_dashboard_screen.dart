@@ -15,7 +15,7 @@ class ManagerDashboardScreen extends StatelessWidget {
     return const RoleScaffold(
       title: 'Manager',
       items: [
-        RoleNavItem(label: 'Overview', icon: Icons.dashboard, page: ManagerOverviewPage()),
+        RoleNavItem(label: 'Overview', icon: Icons.dashboard, page: ManagerOverviewPage(), pageTitle: 'Manager Dashboard'),
         RoleNavItem(label: 'Orders', icon: Icons.receipt_long, page: OrderManagementPage(canForceCancel: true)),
         RoleNavItem(label: 'Reservations', icon: Icons.event_seat, page: ReservationPage()),
         RoleNavItem(label: 'Menu', icon: Icons.restaurant_menu, page: MenuManagementPage()),
