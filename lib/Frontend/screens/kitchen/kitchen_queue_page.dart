@@ -17,7 +17,6 @@ class _Ui {
   static const muted = Color(0xFF7A7A7A);
   static const green = Color(0xFF4CAF50);
   static const greenText = Color(0xFF2E7D32);
-  static const red = Color(0xFFF44336);
   static const redText = Color(0xFFD32F2F);
 }
 
