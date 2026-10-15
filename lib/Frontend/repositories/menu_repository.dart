@@ -37,6 +37,7 @@ class MenuRepository {
     required String description,
     required double price,
     String? image,
+    String? station,
   }) async {
     final data = await _api.post('/menu', body: {
       'categoryId': categoryId,
@@ -44,6 +45,7 @@ class MenuRepository {
       'description': description,
       'price': price,
       if (image != null) 'image': image,
+      if (station != null) 'station': station,
     });
     return MenuItem.fromJson(data);
   }
@@ -52,6 +54,13 @@ class MenuRepository {
     return _api.patch('/menu/$menuId/availability', body: {
       'availability': available ? 'available' : 'unavailable',
     });
+  }
+
+  /// Which kitchen station this dish is cooked at. One of: Grill, Pasta,
+  /// Salad, Desserts, Drinks.
+  Future<MenuItem> setStation(int menuId, String station) async {
+    final data = await _api.post('/menu/$menuId/station', body: {'station': station});
+    return MenuItem.fromJson(data);
   }
 
   Future<void> delete(int menuId) => _api.delete('/menu/$menuId');

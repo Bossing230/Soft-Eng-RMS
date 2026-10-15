@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../repositories/menu_repository.dart';
 
+// Must match Backend/constants/stations.js.
+const _stations = ['Grill', 'Pasta', 'Salad', 'Desserts', 'Drinks'];
+
 /// A full page (not a dialog) for adding a menu item. This exists
 /// specifically to avoid a known Flutter Web bug where a modal
 /// showDialog + the native OS file picker (triggered by image_picker)
@@ -23,6 +26,7 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
   final _descCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
   late int _categoryId;
+  String _station = _stations.first;
 
   XFile? _pickedImage;
   Uint8List? _previewBytes;
@@ -72,6 +76,7 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
         description: _descCtrl.text.trim(),
         price: double.tryParse(_priceCtrl.text) ?? 0,
         image: imageUrl,
+        station: _station,
       );
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -121,10 +126,21 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                 TextField(controller: _priceCtrl, decoration: const InputDecoration(labelText: 'Price', prefixIcon: Icon(Icons.attach_money)), keyboardType: TextInputType.number),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<int>(
-                  value: _categoryId,
+                  initialValue: _categoryId,
                   items: widget.categories.map((c) => DropdownMenuItem<int>(value: c['category_id'], child: Text(c['category_name']))).toList(),
                   onChanged: (v) => setState(() => _categoryId = v!),
                   decoration: const InputDecoration(labelText: 'Category', prefixIcon: Icon(Icons.category_outlined)),
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<String>(
+                  initialValue: _station,
+                  items: _stations.map((s) => DropdownMenuItem<String>(value: s, child: Text('$s Station'))).toList(),
+                  onChanged: (v) => setState(() => _station = v!),
+                  decoration: const InputDecoration(
+                    labelText: 'Kitchen station',
+                    helperText: 'Which station in the kitchen cooks this dish',
+                    prefixIcon: Icon(Icons.soup_kitchen_outlined),
+                  ),
                 ),
                 const SizedBox(height: 32),
                 Row(

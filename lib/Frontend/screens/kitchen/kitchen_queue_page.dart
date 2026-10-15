@@ -1,13 +1,105 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:rms/Frontend/repositories/order_repository.dart';
 import 'package:rms/Frontend/services/socket_services.dart';
-import '../../models/order.dart';
 
-/// Kitchen Staff queue: shows confirmed/preparing orders and lets the
-/// chef move each one forward (Confirmed -> Preparing -> Ready).
-/// Also listens live over Socket.IO so new orders pop in without
-/// a manual refresh.
+// ---------------------------------------------------------------------------
+// Design tokens, taken from the Kitchen Orders design.
+// ---------------------------------------------------------------------------
+class _Ui {
+  static const border = Color(0xFFEBE3D8);
+  static const tanDeep = Color(0xFFB98A5E);
+  static const tanTint = Color(0xFFF0DFCF);
+  static const pillIdle = Color(0xFFEFE9E0);
+  static const panelBg = Color(0xFFFAF6F1);
+  static const ink = Color(0xFF2B2B2B);
+  static const muted = Color(0xFF7A7A7A);
+  static const green = Color(0xFF4CAF50);
+  static const greenText = Color(0xFF2E7D32);
+  static const red = Color(0xFFF44336);
+  static const redText = Color(0xFFD32F2F);
+}
+
+num _asNum(dynamic v) => v is num ? v : (num.tryParse('$v') ?? 0);
+List<Map<String, dynamic>> _asList(dynamic v) =>
+    ((v as List?) ?? const []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+// Stations this app understands — must match Backend/constants/stations.js.
+const _stationIcons = {
+  'grill': Icons.local_fire_department_outlined,
+  'pasta': Icons.ramen_dining_outlined,
+  'salad': Icons.eco_outlined,
+  'desserts': Icons.icecream_outlined,
+  'drinks': Icons.local_cafe_outlined,
+};
+
+// Order status -> the Cooking/Ready/Serving/Delivered track, and its color.
+const _trackStages = ['preparing', 'ready', 'served', 'completed'];
+const _trackLabels = {'preparing': 'Cooking', 'ready': 'Ready', 'served': 'Serving', 'completed': 'Delivered'};
+const _trackIcons = {
+  'preparing': Icons.local_fire_department,
+  'ready': Icons.check_circle_outline,
+  'served': Icons.person_outline,
+  'completed': Icons.inventory_2_outlined,
+};
+
+class _StatusStyle {
+  final Color bg;
+  final Color fg;
+  const _StatusStyle(this.bg, this.fg);
+}
+
+_StatusStyle _cardStatusStyle(String status) {
+  switch (status) {
+    case 'confirmed':
+      return const _StatusStyle(Color(0xFFFFF4D6), Color(0xFFB36B00));
+    case 'preparing':
+      return const _StatusStyle(Color(0xFFE3F2FD), Color(0xFF1E88E5));
+    case 'ready':
+      return const _StatusStyle(Color(0xFFE8F5E9), _Ui.greenText);
+    case 'served':
+      return const _StatusStyle(Color(0xFFE0F2F1), Color(0xFF00796B));
+    case 'completed':
+      return const _StatusStyle(Color(0xFFF3E5F5), Color(0xFF8E24AA));
+    default:
+      return const _StatusStyle(_Ui.pillIdle, _Ui.muted);
+  }
+}
+
+String _cardStatusLabel(String status) {
+  switch (status) {
+    case 'confirmed':
+      return 'Queued';
+    default:
+      return _trackLabels[status] ?? status;
+  }
+}
+
+String _typeLabel(String type) {
+  switch (type) {
+    case 'takeout':
+      return 'Takeout';
+    case 'delivery':
+      return 'Delivery';
+    default:
+      return 'Dine-in';
+  }
+}
+
+String _elapsedLabel(int minutes) => minutes < 1 ? 'just now' : '${minutes}m';
+
+final _money = (num v) => '₱${v.toStringAsFixed(2)}';
+
+// ---------------------------------------------------------------------------
+// Page
+// ---------------------------------------------------------------------------
+
+/// Kitchen Orders board: active orders grouped by station, with a detail
+/// panel for whichever order is selected. Kitchen staff can start cooking
+/// and mark an order ready; moving it on to served/completed is the
+/// cashier's job (see the backend's TRANSITIONS table), so those later
+/// stages show on the status track but aren't tappable here.
 class KitchenQueuePage extends StatefulWidget {
   const KitchenQueuePage({super.key});
 
@@ -18,17 +110,25 @@ class KitchenQueuePage extends StatefulWidget {
 class _KitchenQueuePageState extends State<KitchenQueuePage> {
   final _repo = OrderRepository();
   final _socket = SocketService();
-  List<RmsOrder> _orders = [];
-  bool _loading = true;
   Timer? _pollTimer;
+
+  List<Map<String, dynamic>> _stations = [];
+  List<Map<String, dynamic>> _orders = [];
+  Map<String, dynamic> _performance = {};
+  bool _loading = true;
+  String? _error;
+
+  String _selectedStation = 'all';
+  int? _selectedOrderId;
+  final Set<int> _busy = {};
 
   @override
   void initState() {
     super.initState();
     _load();
-    _socket.connect((_) => _load()); // any notification event triggers a refresh
+    _socket.connect((_) => _load(showSpinner: false)); // any notification event triggers a refresh
     // Fallback polling in case the socket connection drops.
-    _pollTimer = Timer.periodic(const Duration(seconds: 20), (_) => _load());
+    _pollTimer = Timer.periodic(const Duration(seconds: 15), (_) => _load(showSpinner: false));
   }
 
   @override
@@ -38,73 +138,755 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+  Future<void> _load({bool showSpinner = true}) async {
+    if (showSpinner) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
-      final data = await _repo.getKitchenQueue();
-      if (mounted) setState(() { _orders = data; _loading = false; });
-    } catch (_) {
-      if (mounted) setState(() => _loading = false);
+      final data = await _repo.getKitchenBoard();
+      if (!mounted) return;
+      setState(() {
+        _stations = _asList(data['stations']);
+        _orders = _asList(data['orders']);
+        _performance = Map<String, dynamic>.from(data['performance'] ?? {});
+        _loading = false;
+        _error = null;
+        // Keep the selected order only if it's still on the board.
+        if (_selectedOrderId != null && !_orders.any((o) => o['order_id'] == _selectedOrderId)) {
+          _selectedOrderId = null;
+        }
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        if (_orders.isEmpty) _error = '$e';
+      });
     }
   }
 
-  Future<void> _advance(RmsOrder order) async {
-    final next = order.orderStatus == 'confirmed' ? 'preparing' : 'ready';
-    await _repo.updateStatus(order.orderId, next);
-    _load();
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  Color _statusColor(String status) => status == 'preparing' ? Colors.orange : Colors.blue;
+  List<Map<String, dynamic>> get _visibleOrders {
+    if (_selectedStation == 'all') return _orders;
+    return _orders.where((o) => '${o['station']}'.toLowerCase() == _selectedStation).toList();
+  }
+
+  Future<void> _advance(Map<String, dynamic> order, String next) async {
+    final orderId = order['order_id'] as int;
+    setState(() => _busy.add(orderId));
+    try {
+      await _repo.updateStatus(orderId, next);
+      await _load(showSpinner: false);
+    } catch (e) {
+      _snack('$e');
+    } finally {
+      if (mounted) setState(() => _busy.remove(orderId));
+    }
+  }
+
+  void _selectOrder(int orderId) {
+    final wide = MediaQuery.of(context).size.width >= 1100;
+    if (wide) {
+      setState(() => _selectedOrderId = orderId);
+      return;
+    }
+    final order = _orders.firstWhere((o) => o['order_id'] == orderId);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: _Ui.panelBg,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (context, scrollController) => _OrderDetailPanel(
+          order: order,
+          busy: _busy.contains(orderId),
+          scrollController: scrollController,
+          onAdvance: (next) => _advance(order, next),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_orders.isEmpty) {
-      return const Center(child: Text('No orders in the queue right now.', style: TextStyle(color: Colors.grey)));
+    if (_error != null && _orders.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.cloud_off_outlined, size: 40, color: _Ui.muted),
+              const SizedBox(height: 12),
+              const Text("Couldn't load the kitchen board", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: _Ui.muted)),
+              const SizedBox(height: 16),
+              ElevatedButton(onPressed: _load, child: const Text('Try again')),
+            ],
+          ),
+        ),
+      );
     }
 
-    return RefreshIndicator(
-      onRefresh: _load,
-      child: GridView.builder(
-        padding: const EdgeInsets.all(12),
-        gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 320, mainAxisExtent: 220, crossAxisSpacing: 12, mainAxisSpacing: 12),
-        itemCount: _orders.length,
-        itemBuilder: (_, i) {
-          final order = _orders[i];
-          return Card(
-            color: _statusColor(order.orderStatus).withOpacity(0.06),
-            child: Padding(
-              padding: const EdgeInsets.all(14),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text('Order #${order.orderId}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      Chip(
-                        label: Text(order.orderStatus.toUpperCase(), style: const TextStyle(color: Colors.white, fontSize: 10)),
-                        backgroundColor: _statusColor(order.orderStatus),
-                        visualDensity: VisualDensity.compact,
+    final wide = MediaQuery.of(context).size.width >= 1100;
+    final selectedOrder = _selectedOrderId == null
+        ? null
+        : _orders.cast<Map<String, dynamic>?>().firstWhere((o) => o?['order_id'] == _selectedOrderId, orElse: () => null);
+
+    return Column(
+      children: [
+        _Header(activeCount: _orders.where((o) => o['order_status'] != 'completed').length, onRefresh: () => _load(showSpinner: false)),
+        _StationTabs(
+          stations: _stations,
+          totalActive: _orders.where((o) => o['order_status'] != 'completed').length,
+          selected: _selectedStation,
+          onSelected: (key) => setState(() => _selectedStation = key),
+        ),
+        Expanded(
+          child: Row(
+            children: [
+              Expanded(
+                child: _visibleOrders.isEmpty
+                    ? const Center(child: Text('No orders for this station right now.', style: TextStyle(color: _Ui.muted)))
+                    : _StationBoard(
+                        orders: _visibleOrders,
+                        stations: _selectedStation == 'all' ? _stations : null,
+                        selectedOrderId: wide ? _selectedOrderId : null,
+                        onTap: (id) => _selectOrder(id),
                       ),
-                    ],
-                  ),
-                  if (order.tableNumber != null) Text('Table: ${order.tableNumber}'),
-                  const SizedBox(height: 6),
+              ),
+              if (wide)
+                Container(
+                  width: 360,
+                  decoration: const BoxDecoration(color: _Ui.panelBg, border: Border(left: BorderSide(color: _Ui.border))),
+                  child: selectedOrder == null
+                      ? const Center(child: Text('Select an order to view details.', style: TextStyle(color: _Ui.muted)))
+                      : _OrderDetailPanel(
+                          order: selectedOrder,
+                          busy: _busy.contains(selectedOrder['order_id']),
+                          onAdvance: (next) => _advance(selectedOrder, next),
+                        ),
+                ),
+            ],
+          ),
+        ),
+        _PerformanceBar(performance: _performance),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Header
+// ---------------------------------------------------------------------------
+
+class _Header extends StatelessWidget {
+  final int activeCount;
+  final VoidCallback onRefresh;
+  const _Header({required this.activeCount, required this.onRefresh});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
+      decoration: const BoxDecoration(color: Colors.white, border: Border(bottom: BorderSide(color: _Ui.border))),
+      child: Row(
+        children: [
+          const Icon(Icons.restaurant_menu, color: _Ui.tanDeep),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Kitchen Orders', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: _Ui.ink)),
+                Text(
+                  'Track and manage all kitchen orders in real time',
+                  style: const TextStyle(fontSize: 12, color: _Ui.muted),
+                ),
+              ],
+            ),
+          ),
+          Container(width: 8, height: 8, decoration: const BoxDecoration(color: _Ui.green, shape: BoxShape.circle)),
+          const SizedBox(width: 6),
+          const Text('Live', style: TextStyle(fontSize: 12, color: _Ui.greenText, fontWeight: FontWeight.w600)),
+          IconButton(tooltip: 'Refresh', onPressed: onRefresh, icon: const Icon(Icons.refresh, color: _Ui.muted)),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Station tabs
+// ---------------------------------------------------------------------------
+
+class _StationTabs extends StatelessWidget {
+  final List<Map<String, dynamic>> stations;
+  final int totalActive;
+  final String selected;
+  final ValueChanged<String> onSelected;
+  const _StationTabs({required this.stations, required this.totalActive, required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      color: Colors.white,
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            _Pill(
+              icon: null,
+              label: 'All Stations',
+              count: totalActive,
+              selected: selected == 'all',
+              onTap: () => onSelected('all'),
+            ),
+            for (final s in stations) ...[
+              const SizedBox(width: 8),
+              _Pill(
+                icon: _stationIcons['${s['key']}'],
+                label: '${s['label']}'.replaceAll(' Station', ''),
+                count: _asNum(s['count']).toInt(),
+                selected: selected == s['key'],
+                onTap: () => onSelected('${s['key']}'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  final IconData? icon;
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+  const _Pill({required this.icon, required this.label, required this.count, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? _Ui.tanDeep : _Ui.pillIdle,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 16, color: selected ? Colors.white : _Ui.muted),
+                const SizedBox(width: 6),
+              ],
+              Text(label, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: selected ? Colors.white : _Ui.ink)),
+              const SizedBox(width: 6),
+              Container(
+                constraints: const BoxConstraints(minWidth: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: selected ? Colors.white.withOpacity(0.28) : _Ui.tanTint,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  '$count',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: selected ? Colors.white : _Ui.tanDeep),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Station board (multi-column) / single list
+// ---------------------------------------------------------------------------
+
+class _StationBoard extends StatelessWidget {
+  final List<Map<String, dynamic>> orders;
+  /// When set, orders are split into one column per station (the "All
+  /// Stations" view); otherwise they're a single list (one station selected).
+  final List<Map<String, dynamic>>? stations;
+  final int? selectedOrderId;
+  final ValueChanged<int> onTap;
+  const _StationBoard({required this.orders, required this.stations, required this.selectedOrderId, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    if (stations == null) {
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [for (final o in orders) _OrderCard(order: o, selected: o['order_id'] == selectedOrderId, onTap: () => onTap(o['order_id'] as int))],
+      );
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final s in stations!)
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: _StationColumn(
+                station: s,
+                orders: orders.where((o) => '${o['station']}'.toLowerCase() == s['key']).toList(),
+                selectedOrderId: selectedOrderId,
+                onTap: onTap,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _StationColumn extends StatelessWidget {
+  final Map<String, dynamic> station;
+  final List<Map<String, dynamic>> orders;
+  final int? selectedOrderId;
+  final ValueChanged<int> onTap;
+  const _StationColumn({required this.station, required this.orders, required this.selectedOrderId, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 230,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(_stationIcons['${station['key']}'], size: 16, color: _Ui.tanDeep),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  '${station['label']}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.ink),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(color: _Ui.tanTint, borderRadius: BorderRadius.circular(10)),
+                child: Text('${station['count']}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _Ui.tanDeep)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (orders.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Text('Nothing here.', style: TextStyle(fontSize: 12, color: _Ui.muted)),
+            )
+          else
+            for (final o in orders)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _OrderCard(order: o, selected: o['order_id'] == selectedOrderId, onTap: () => onTap(o['order_id'] as int)),
+              ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OrderCard extends StatelessWidget {
+  final Map<String, dynamic> order;
+  final bool selected;
+  final VoidCallback onTap;
+  const _OrderCard({required this.order, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = '${order['order_status']}';
+    final style = _cardStatusStyle(status);
+    final items = _asList(order['items']);
+    final itemsText = items.map((i) => '${i['quantity']}× ${i['food_name']}').join(', ');
+    final tableNumber = order['table_number'] as String?;
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: selected ? _Ui.tanDeep : _Ui.border, width: selected ? 1.6 : 1),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
                   Expanded(
-                    child: ListView(
-                      children: order.items.map((i) => Text('${i.quantity}x ${i.foodName}')).toList(),
-                    ),
+                    child: Text('Order #${order['order_id']}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.ink)),
                   ),
-                  ElevatedButton(
-                    onPressed: () => _advance(order),
-                    child: Text(order.orderStatus == 'confirmed' ? 'Start Preparing' : 'Mark Ready'),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(color: style.bg, borderRadius: BorderRadius.circular(20)),
+                    child: Text(_cardStatusLabel(status), style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: style.fg)),
                   ),
                 ],
               ),
-            ),
-          );
-        },
+              const SizedBox(height: 4),
+              Text(
+                tableNumber ?? _typeLabel('${order['order_type']}'),
+                style: const TextStyle(fontSize: 11, color: _Ui.muted),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                itemsText,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 12, color: _Ui.ink, height: 1.3),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.access_time, size: 12, color: _Ui.muted),
+                  const SizedBox(width: 4),
+                  Text(_elapsedLabel(_asNum(order['minutes_ago']).toInt()), style: const TextStyle(fontSize: 11, color: _Ui.muted)),
+                ],
+              ),
+            ],
+          ),
+        ),
       ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Order detail panel
+// ---------------------------------------------------------------------------
+
+class _OrderDetailPanel extends StatelessWidget {
+  final Map<String, dynamic> order;
+  final bool busy;
+  final ScrollController? scrollController;
+  final ValueChanged<String> onAdvance;
+  const _OrderDetailPanel({required this.order, required this.busy, this.scrollController, required this.onAdvance});
+
+  @override
+  Widget build(BuildContext context) {
+    final status = '${order['order_status']}';
+    final items = _asList(order['items']);
+    final allowedNext = (order['allowed_next'] as List<dynamic>? ?? []).map((e) => '$e').toList();
+    final tableNumber = order['table_number'] as String?;
+    final totalItems = items.fold<int>(0, (sum, i) => sum + _asNum(i['quantity']).toInt());
+
+    final stageIndex = _trackStages.indexOf(status); // -1 while still 'confirmed'
+    final nextAction = allowedNext.contains('preparing')
+        ? ('preparing', 'Start Preparing')
+        : allowedNext.contains('ready')
+            ? ('ready', 'Mark as Ready')
+            : null;
+
+    final elapsedLabel = order['prep_started_at'] != null
+        ? 'Cooking for ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())}'
+        : 'Waiting to start · ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())} in queue';
+
+    return SingleChildScrollView(
+      controller: scrollController,
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text('Order #${order['order_id']}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: _Ui.ink)),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(color: _cardStatusStyle(status).bg, borderRadius: BorderRadius.circular(20)),
+                child: Text(_cardStatusLabel(status), style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _cardStatusStyle(status).fg)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '${tableNumber ?? _typeLabel('${order['order_type']}')} · ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())} ago',
+            style: const TextStyle(fontSize: 13, color: _Ui.muted),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [for (final stage in _trackStages) _TrackStep(stage: stage, state: _stepState(stage, stageIndex))],
+          ),
+          const SizedBox(height: 20),
+          const Text('Order Items', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.ink)),
+          const SizedBox(height: 8),
+          for (final item in items)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(
+                children: [
+                  Text('${item['quantity']}×', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.tanDeep)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('${item['food_name']}', style: const TextStyle(fontSize: 13, color: _Ui.ink))),
+                ],
+              ),
+            ),
+          const SizedBox(height: 6),
+          Text('Total Items: $totalItems', style: const TextStyle(fontSize: 12, color: _Ui.muted)),
+          const SizedBox(height: 18),
+          const Text('Special Notes', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.ink)),
+          const SizedBox(height: 6),
+          const Text('None for this order.', style: TextStyle(fontSize: 13, color: _Ui.muted)),
+          const SizedBox(height: 18),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: _Ui.tanTint, borderRadius: BorderRadius.circular(12)),
+            child: Row(
+              children: [
+                const Icon(Icons.access_time_filled, size: 20, color: _Ui.tanDeep),
+                const SizedBox(width: 10),
+                Expanded(child: Text(elapsedLabel, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.tanDeep))),
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+          if (nextAction != null)
+            SizedBox(
+              width: double.infinity,
+              height: 46,
+              child: ElevatedButton(
+                onPressed: busy ? null : () => onAdvance(nextAction.$1),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _Ui.tanDeep,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: busy
+                    ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : Text(nextAction.$2),
+              ),
+            )
+          else
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+              alignment: Alignment.center,
+              decoration: BoxDecoration(color: _Ui.pillIdle, borderRadius: BorderRadius.circular(12)),
+              child: Text(_waitingLabel(status), style: const TextStyle(fontSize: 13, color: _Ui.muted)),
+            ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            height: 44,
+            child: OutlinedButton.icon(
+              onPressed: () => _showFullDetails(context, order),
+              icon: const Icon(Icons.receipt_long_outlined, size: 18),
+              label: const Text('View Order Details'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _Ui.tanDeep,
+                side: const BorderSide(color: _Ui.tanDeep),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static String _waitingLabel(String status) {
+    switch (status) {
+      case 'ready':
+        return 'Ready — waiting to be served';
+      case 'served':
+        return 'Served — waiting to be closed out';
+      case 'completed':
+        return 'Completed';
+      default:
+        return 'No action needed right now';
+    }
+  }
+
+  static String _stepState(String stage, int stageIndex) {
+    final i = _trackStages.indexOf(stage);
+    if (stageIndex < 0) return 'pending'; // still queued, nothing started
+    if (i < stageIndex) return 'done';
+    if (i == stageIndex) return 'current';
+    return 'pending';
+  }
+
+  void _showFullDetails(BuildContext context, Map<String, dynamic> order) {
+    final items = _asList(order['items']);
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Order #${order['order_id']}'),
+        content: SizedBox(
+          width: 360,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final item in items)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text('${item['quantity']}× ${item['food_name']}')),
+                        Text(_money(_asNum(item['subtotal']))),
+                      ],
+                    ),
+                  ),
+                const Divider(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Total', style: TextStyle(fontWeight: FontWeight.w600)),
+                    Text(_money(_asNum(order['total_amount'])), style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Close'))],
+      ),
+    );
+  }
+}
+
+class _TrackStep extends StatelessWidget {
+  final String stage;
+  final String state; // 'done' | 'current' | 'pending'
+  const _TrackStep({required this.stage, required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color;
+    switch (state) {
+      case 'done':
+        color = _Ui.greenText;
+        break;
+      case 'current':
+        color = _Ui.tanDeep;
+        break;
+      default:
+        color = _Ui.muted.withOpacity(0.4);
+    }
+    return Column(
+      children: [
+        Container(
+          width: 36,
+          height: 36,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: state == 'pending' ? _Ui.pillIdle : color.withOpacity(0.14),
+            shape: BoxShape.circle,
+            border: state == 'current' ? Border.all(color: color, width: 1.6) : null,
+          ),
+          child: Icon(
+            state == 'done' ? Icons.check : _trackIcons[stage],
+            size: 17,
+            color: state == 'pending' ? _Ui.muted.withOpacity(0.6) : color,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(_trackLabels[stage] ?? stage, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w500, color: color)),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Performance bar
+// ---------------------------------------------------------------------------
+
+class _PerformanceBar extends StatelessWidget {
+  final Map<String, dynamic> performance;
+  const _PerformanceBar({required this.performance});
+
+  @override
+  Widget build(BuildContext context) {
+    final avgPrep = performance['avgPrepMinutes'];
+    final inKitchen = performance['inKitchen'];
+    final onTimePct = performance['onTimePct'];
+    final delayed = performance['delayedCount'];
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      decoration: const BoxDecoration(color: Colors.white, border: Border(top: BorderSide(color: _Ui.border))),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            const Icon(Icons.local_fire_department_outlined, size: 16, color: _Ui.tanDeep),
+            const SizedBox(width: 6),
+            const Text('Kitchen Performance', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _Ui.ink)),
+            const SizedBox(width: 20),
+            _PerfStat(label: 'Avg Prep Time', value: avgPrep == null ? '—' : '${avgPrep}m'),
+            const SizedBox(width: 20),
+            _PerfStat(label: 'In Kitchen', value: '$inKitchen'),
+            const SizedBox(width: 20),
+            _PerfStat(label: 'On-Time', value: onTimePct == null ? '—' : '$onTimePct%'),
+            const SizedBox(width: 20),
+            _PerfStat(
+              label: 'Delayed Orders',
+              value: '$delayed',
+              valueColor: (_asNum(delayed).toInt() > 0) ? _Ui.redText : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PerfStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+  const _PerfStat({required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(value, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700, color: valueColor ?? _Ui.ink)),
+        const SizedBox(width: 6),
+        Text(label, style: const TextStyle(fontSize: 11, color: _Ui.muted)),
+      ],
     );
   }
 }

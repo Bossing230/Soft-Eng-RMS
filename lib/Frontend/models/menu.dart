@@ -8,6 +8,11 @@ class MenuItem {
   final String availability;
   final String? categoryName;
 
+  /// Which kitchen station cooks this dish: Grill, Pasta, Salad, Desserts or
+  /// Drinks. Null only for an item created before stations existed and not
+  /// yet backfilled.
+  final String? station;
+
   MenuItem({
     required this.menuId,
     required this.categoryId,
@@ -17,6 +22,7 @@ class MenuItem {
     this.image,
     required this.availability,
     this.categoryName,
+    this.station,
   });
 
   bool get isAvailable => availability == 'available';
@@ -31,6 +37,7 @@ class MenuItem {
       image: json['image'],
       availability: json['availability'] ?? 'available',
       categoryName: json['category_name'],
+      station: json['station'],
     );
   }
 }

@@ -24,6 +24,14 @@ class OrderRepository {
     return (data as List).map((e) => RmsOrder.fromJson(e)).toList();
   }
 
+  /// The Kitchen board: orders grouped by station plus real performance
+  /// numbers. Returned as raw JSON (not RmsOrder) since it carries fields
+  /// (station, prep timestamps, allowed_next) that model doesn't have.
+  Future<Map<String, dynamic>> getKitchenBoard() async {
+    final data = await _api.get('/orders/kitchen-board');
+    return Map<String, dynamic>.from(data);
+  }
+
   Future<RmsOrder> getOne(int orderId) async {
     final data = await _api.get('/orders/$orderId');
     return RmsOrder.fromJson(data);
