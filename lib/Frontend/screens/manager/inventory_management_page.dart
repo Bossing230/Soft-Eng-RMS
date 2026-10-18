@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:rms/Frontend/models/inventory.dart';
@@ -5,7 +6,7 @@ import 'package:rms/Frontend/models/inventory.dart';
 import '../../repositories/inventory_repository.dart';
 
 // ---------------------------------------------------------------------------
-// Design tokens, taken from the inventory design.
+// Design tokens, taken from the inventory dashboard design.
 // ---------------------------------------------------------------------------
 class _Ui {
   static const border = Color(0xFFEBE3D8);
@@ -16,6 +17,7 @@ class _Ui {
   static const fieldFill = Color(0xFFFBF5F0);
   static const dialogBg = Color(0xFFF6E7DB);
   static const track = Color(0xFFE9E3DC);
+  static const pillIdle = Color(0xFFEFE9E0);
   static const ink = Color(0xFF2B2B2B);
   static const muted = Color(0xFF7A7A7A);
   static const green = Color(0xFF4CAF50);
@@ -24,6 +26,7 @@ class _Ui {
   static const redText = Color(0xFFE53935);
   static const amberText = Color(0xFFB07A00);
   static const greenText = Color(0xFF2E7D32);
+  static const blue = Color(0xFF2196F3);
 }
 
 /// Standard choices, so "kg", "Kg" and "kgs" don't become three different units.
@@ -41,28 +44,79 @@ const _categories = [
   'Other',
 ];
 
+final _categoryIcons = {
+  'meat': Icons.kebab_dining_outlined,
+  'seafood': Icons.set_meal_outlined,
+  'vegetables': Icons.eco_outlined,
+  'fruits': Icons.local_grocery_store_outlined,
+  'dairy & eggs': Icons.egg_outlined,
+  'grains': Icons.grain_outlined,
+  'dry goods': Icons.inventory_2_outlined,
+  'condiments & sauces': Icons.liquor_outlined,
+  'beverages': Icons.local_drink_outlined,
+};
+IconData _categoryIcon(String category) => _categoryIcons[category.toLowerCase()] ?? Icons.inventory_2_outlined;
+
 final _qtyFormat = NumberFormat('#,##0.0#');
 final _wholeFormat = NumberFormat('#,##0.##');
+final _moneyFormat = NumberFormat('#,##0.00');
 
 String _fmtQty(double v) => _qtyFormat.format(v);
 String _fmtWhole(double v) => _wholeFormat.format(v);
+String _fmtMoney(double v) => '₱${_moneyFormat.format(v)}';
 double _round2(double v) => (v * 100).roundToDouble() / 100;
 String _plain(double v) => v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toString();
 
-/// Red when low or out, amber up to 60%, green above.
-Color _barColor(InventoryItem i) => i.needsRestock ? _Ui.red : (i.fraction <= 0.6 ? _Ui.amber : _Ui.green);
-Color _percentColor(InventoryItem i) =>
-    i.needsRestock ? _Ui.redText : (i.fraction <= 0.6 ? _Ui.amberText : _Ui.greenText);
+class _SeverityStyle {
+  final Color bg;
+  final Color fg;
+  final Color dot;
+  final String label;
+  const _SeverityStyle(this.bg, this.fg, this.dot, this.label);
+}
+
+/// The four-state display bucket (ok/low/critical/out). The stock-change
+/// alerts and restock logic still use the item's 3-state `status`; this is
+/// only for how a row or chip is colored and labeled.
+_SeverityStyle _severityStyle(String severity) {
+  switch (severity) {
+    case 'out':
+      return const _SeverityStyle(Color(0xFFFFCDD2), Color(0xFFC62828), Color(0xFFC62828), 'Out of Stock');
+    case 'critical':
+      return const _SeverityStyle(Color(0xFFFFEBEE), _Ui.redText, _Ui.redText, 'Critical');
+    case 'low':
+      return const _SeverityStyle(Color(0xFFFFF4D6), _Ui.amberText, Color(0xFFE0A400), 'Low Stock');
+    default:
+      return const _SeverityStyle(Color(0xFFE8F5E9), _Ui.greenText, _Ui.green, 'In Stock');
+  }
+}
 
 String _formatTime(String raw) {
   final parsed = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
   return parsed == null ? raw : DateFormat('MMM d, h:mm a').format(parsed);
 }
 
-InputDecoration _fieldDecoration({String? hint, IconData? icon, String? error}) {
+/// "Today, 10:24 AM" / "Yesterday, 4:02 PM" / "Jan 4, 2026".
+String _formatLastUpdated(String? raw) {
+  if (raw == null || raw.isEmpty) return '—';
+  final parsed = DateTime.tryParse(raw.replaceFirst(' ', 'T'));
+  if (parsed == null) return raw;
+  final now = DateTime.now();
+  final day = DateTime(parsed.year, parsed.month, parsed.day);
+  final today = DateTime(now.year, now.month, now.day);
+  final diff = today.difference(day).inDays;
+  if (diff == 0) return 'Today, ${DateFormat('h:mm a').format(parsed)}';
+  if (diff == 1) return 'Yesterday, ${DateFormat('h:mm a').format(parsed)}';
+  return DateFormat('MMM d, yyyy').format(parsed);
+}
+
+InputDecoration _fieldDecoration({String? hint, String? label, IconData? icon, String? error, String? helper}) {
   return InputDecoration(
     hintText: hint,
+    labelText: label,
     errorText: error,
+    helperText: helper,
+    helperMaxLines: 2,
     prefixIcon: icon == null ? null : Icon(icon, size: 20, color: _Ui.muted),
     filled: true,
     fillColor: _Ui.fieldFill,
@@ -70,6 +124,8 @@ InputDecoration _fieldDecoration({String? hint, IconData? icon, String? error}) 
     border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: BorderSide.none),
   );
 }
+
+const _itemsPerPage = 8;
 
 // ---------------------------------------------------------------------------
 // Page
@@ -87,10 +143,13 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   final _searchController = TextEditingController();
 
   List<InventoryItem> _items = [];
+  InventoryOverview? _overview;
   bool _loading = true;
   String? _error;
-  String _filter = 'all'; // 'all' | 'low' | 'out'
+  String _categoryFilter = 'All'; // 'All' or a real category name
   String _query = '';
+  int _page = 0;
+  bool _downloadingReport = false;
 
   @override
   void initState() {
@@ -112,10 +171,11 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
       });
     }
     try {
-      final data = await _repo.getAll();
+      final results = await Future.wait([_repo.getAll(), _repo.getOverview()]);
       if (!mounted) return;
       setState(() {
-        _items = data;
+        _items = results[0] as List<InventoryItem>;
+        _overview = results[1] as InventoryOverview;
         _loading = false;
         _error = null;
       });
@@ -134,23 +194,40 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Out of stock first, then low, then the rest; A to Z inside each group.
-  List<InventoryItem> get _visible {
+  /// Out of stock and critical first, then low, then the rest; A to Z inside each group.
+  List<InventoryItem> get _filtered {
     final q = _query.trim().toLowerCase();
     final list = _items.where((i) {
-      if (_filter == 'low' && !i.isLow) return false;
-      if (_filter == 'out' && !i.isOut) return false;
+      if (_categoryFilter != 'All') {
+        final category = i.category.isEmpty ? 'Uncategorized' : i.category;
+        if (category != _categoryFilter) return false;
+      }
       if (q.isEmpty) return true;
       return i.ingredientName.toLowerCase().contains(q) || i.category.toLowerCase().contains(q);
     }).toList();
 
-    int rank(InventoryItem i) => i.isOut ? 0 : (i.isLow ? 1 : 2);
+    const rank = {'out': 0, 'critical': 1, 'low': 2, 'ok': 3};
     list.sort((a, b) {
-      final byRank = rank(a).compareTo(rank(b));
+      final byRank = (rank[a.severity] ?? 9).compareTo(rank[b.severity] ?? 9);
       return byRank != 0 ? byRank : a.ingredientName.toLowerCase().compareTo(b.ingredientName.toLowerCase());
     });
     return list;
   }
+
+  int get _pageCount => (_filtered.length / _itemsPerPage).ceil().clamp(1, 999999);
+
+  List<InventoryItem> get _pageItems {
+    final all = _filtered;
+    final page = _page.clamp(0, _pageCount - 1);
+    final start = page * _itemsPerPage;
+    if (start >= all.length) return [];
+    return all.sublist(start, (start + _itemsPerPage).clamp(0, all.length));
+  }
+
+  void _setCategoryFilter(String category) => setState(() {
+        _categoryFilter = category;
+        _page = 0;
+      });
 
   // ---- actions ----
 
@@ -189,77 +266,16 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
     }
   }
 
-  Future<void> _restockAllLow() async {
-    final low = _items.where((i) => i.needsRestock).toList();
-    // Each low item gets enough to reach its max stock.
-    final plan = <int, double>{};
-    for (final i in low) {
-      final add = _round2(i.capacity - i.quantity);
-      if (add > 0) plan[i.inventoryId] = add;
-    }
-    if (plan.isEmpty) {
-      _snack(low.isEmpty ? 'Nothing needs restocking.' : 'Set a max stock on the low items first.');
-      return;
-    }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _Ui.dialogBg,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Restock all low items'),
-        content: SizedBox(
-          width: 420,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 360),
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'This records a delivery for each item below, bringing it up to its max stock. '
-                    'Only confirm once the stock has actually arrived.',
-                    style: TextStyle(fontSize: 13, color: _Ui.muted),
-                  ),
-                  const SizedBox(height: 12),
-                  for (final i in low)
-                    if (plan.containsKey(i.inventoryId))
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: Row(
-                          children: [
-                            Expanded(child: Text(i.ingredientName, style: const TextStyle(fontSize: 14, color: _Ui.ink))),
-                            Text(
-                              '+${_fmtQty(plan[i.inventoryId]!)} ${i.unit}',
-                              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.greenText),
-                            ),
-                          ],
-                        ),
-                      ),
-                ],
-              ),
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: _Ui.tanDeep, foregroundColor: Colors.white),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Record ${plan.length} ${plan.length == 1 ? 'delivery' : 'deliveries'}'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
+  Future<void> _downloadReport() async {
+    if (_downloadingReport) return;
+    setState(() => _downloadingReport = true);
     try {
-      await _repo.restock(plan);
-      await _load(showSpinner: false);
-      _snack('Restocked ${plan.length} ${plan.length == 1 ? 'item' : 'items'}');
+      final started = await _repo.downloadReportPdf();
+      _snack(started ? 'Downloading the inventory report…' : "Downloading isn't supported on this device yet.");
     } catch (e) {
-      _snack('$e');
+      _snack('Could not download the report: $e');
+    } finally {
+      if (mounted) setState(() => _downloadingReport = false);
     }
   }
 
@@ -272,54 +288,39 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
       return _ErrorView(message: _error!, onRetry: _load);
     }
 
-    final visible = _visible;
-    final lowCount = _items.where((i) => i.isLow).length;
-    final outCount = _items.where((i) => i.isOut).length;
-    final needCount = lowCount + outCount;
-
+    final overview = _overview;
     return RefreshIndicator(
       onRefresh: () => _load(showSpinner: false),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 720;
+          final wide = constraints.maxWidth >= 1000;
           return SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: EdgeInsets.fromLTRB(wide ? 24 : 16, wide ? 20 : 16, wide ? 24 : 16, 24),
+            padding: EdgeInsets.all(wide ? 24 : 16),
             child: Center(
               child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1100),
+                constraints: const BoxConstraints(maxWidth: 1320),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _Controls(
-                      controller: _searchController,
-                      onSearch: (v) => setState(() => _query = v),
-                      onRestock: _restockAllLow,
-                      onAdd: _openAddItem,
-                    ),
-                    const SizedBox(height: 12),
-                    _FilterPills(
-                      selected: _filter,
-                      counts: {'all': _items.length, 'low': lowCount, 'out': outCount},
-                      onChanged: (f) => setState(() => _filter = f),
-                    ),
-                    if (needCount > 0) ...[
-                      const SizedBox(height: 12),
-                      _LowBanner(count: needCount),
+                    _PageHeader(onAdd: _openAddItem, onDownload: _downloadReport, downloading: _downloadingReport),
+                    const SizedBox(height: 16),
+                    if (overview != null) _StatCardsRow(overview: overview),
+                    const SizedBox(height: 16),
+                    if (wide)
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(flex: 7, child: _itemsPanel(overview)),
+                          const SizedBox(width: 16),
+                          SizedBox(width: 340, child: _sidebar(overview)),
+                        ],
+                      )
+                    else ...[
+                      _itemsPanel(overview),
+                      const SizedBox(height: 16),
+                      _sidebar(overview),
                     ],
-                    const SizedBox(height: 12),
-                    if (visible.isEmpty)
-                      _EmptyState(hasItems: _items.isNotEmpty)
-                    else
-                      for (final item in visible)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 12),
-                          child: _InventoryCard(
-                            item: item,
-                            onTap: () => _openDetail(item),
-                            onAddDelivery: () => _quickDelivery(item),
-                          ),
-                        ),
                   ],
                 ),
               ),
@@ -329,142 +330,676 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
       ),
     );
   }
+
+  Widget _itemsPanel(InventoryOverview? overview) {
+    final filtered = _filtered;
+    final pageItems = _pageItems;
+    return Container(
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: _Ui.border)),
+      padding: const EdgeInsets.all(18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Inventory Items', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _Ui.ink)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _searchController,
+            onChanged: (v) => setState(() {
+              _query = v;
+              _page = 0;
+            }),
+            decoration: InputDecoration(
+              hintText: 'Search ingredients or categories...',
+              prefixIcon: const Icon(Icons.search, size: 20, color: _Ui.muted),
+              filled: true,
+              fillColor: _Ui.searchFill,
+              contentPadding: const EdgeInsets.symmetric(vertical: 14),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _Ui.border)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _Ui.border)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _Ui.tan)),
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (overview != null)
+            _CategoryPills(
+              totalItems: overview.totalItems,
+              categories: overview.categories,
+              selected: _categoryFilter,
+              onSelected: _setCategoryFilter,
+            ),
+          const SizedBox(height: 14),
+          if (filtered.isEmpty)
+            _EmptyState(hasItems: _items.isNotEmpty)
+          else ...[
+            _ItemsTableHeader(),
+            for (final item in pageItems)
+              _ItemRow(
+                item: item,
+                onTap: () => _openDetail(item),
+                onAddDelivery: item.needsRestock ? () => _quickDelivery(item) : null,
+              ),
+            const SizedBox(height: 10),
+            _Pagination(
+              total: filtered.length,
+              page: _page,
+              pageCount: _pageCount,
+              perPage: _itemsPerPage,
+              onPage: (p) => setState(() => _page = p),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _sidebar(InventoryOverview? overview) {
+    if (overview == null) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _StockOverviewCard(overview: overview),
+        const SizedBox(height: 16),
+        _RecentActivityCard(activity: overview.recentActivity),
+        if (overview.actionNeeded != null) ...[
+          const SizedBox(height: 16),
+          _ActionNeededCard(
+            item: overview.actionNeeded!,
+            onRestock: () => _quickDelivery(overview.actionNeeded!),
+          ),
+        ],
+      ],
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
-// Top controls, filters, banner
+// Header
 // ---------------------------------------------------------------------------
 
-class _Controls extends StatelessWidget {
-  final TextEditingController controller;
-  final ValueChanged<String> onSearch;
-  final VoidCallback onRestock;
+class _PageHeader extends StatelessWidget {
   final VoidCallback onAdd;
-  const _Controls({required this.controller, required this.onSearch, required this.onRestock, required this.onAdd});
+  final VoidCallback onDownload;
+  final bool downloading;
+  const _PageHeader({required this.onAdd, required this.onDownload, required this.downloading});
 
   @override
   Widget build(BuildContext context) {
-    final search = TextField(
-      controller: controller,
-      onChanged: onSearch,
-      decoration: InputDecoration(
-        hintText: 'Search inventory...',
-        prefixIcon: const Icon(Icons.search, size: 20, color: _Ui.muted),
-        filled: true,
-        fillColor: _Ui.searchFill,
-        contentPadding: const EdgeInsets.symmetric(vertical: 16),
-        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _Ui.border)),
-        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _Ui.border)),
-        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(14), borderSide: const BorderSide(color: _Ui.tan)),
-      ),
+    final titleBlock = Row(
+      children: [
+        Container(
+          width: 46,
+          height: 46,
+          decoration: BoxDecoration(color: _Ui.tanDeep, borderRadius: BorderRadius.circular(12)),
+          child: const Icon(Icons.inventory_2_outlined, color: Colors.white, size: 24),
+        ),
+        const SizedBox(width: 14),
+        const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Inventory', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: _Ui.ink)),
+            Text('Track stock, monitor usage and avoid waste', style: TextStyle(fontSize: 12, color: _Ui.muted)),
+          ],
+        ),
+      ],
     );
 
-    final restock = OutlinedButton.icon(
-      onPressed: onRestock,
-      icon: const Icon(Icons.refresh, size: 18),
-      label: const Text('Restock all low'),
-      style: OutlinedButton.styleFrom(
-        foregroundColor: _Ui.tanDeep,
-        side: const BorderSide(color: _Ui.tan),
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      ),
-    );
-
-    final add = ElevatedButton.icon(
-      onPressed: onAdd,
-      icon: const Icon(Icons.add, size: 18),
-      label: const Text('Add item'),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: _Ui.tanDeep,
-        foregroundColor: Colors.white,
-        elevation: 0,
-        padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
+    final buttons = Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: [
+        OutlinedButton.icon(
+          onPressed: downloading ? null : onDownload,
+          icon: downloading
+              ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.download_outlined, size: 18),
+          label: const Text('Download Report'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _Ui.tanDeep,
+            side: const BorderSide(color: _Ui.tan),
+            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+        ElevatedButton.icon(
+          onPressed: onAdd,
+          icon: const Icon(Icons.add, size: 18),
+          label: const Text('Add Item'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _Ui.tanDeep,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        ),
+      ],
     );
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        if (constraints.maxWidth >= 720) {
-          return Row(
-            children: [
-              Expanded(child: search),
-              const SizedBox(width: 12),
-              restock,
-              const SizedBox(width: 12),
-              add,
-            ],
-          );
+        if (constraints.maxWidth >= 640) {
+          return Row(children: [Expanded(child: titleBlock), buttons]);
         }
-        return Column(
-          children: [
-            search,
-            const SizedBox(height: 10),
-            Row(children: [Expanded(child: restock), const SizedBox(width: 10), Expanded(child: add)]),
-          ],
+        return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [titleBlock, const SizedBox(height: 14), buttons]);
+      },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Stat cards
+// ---------------------------------------------------------------------------
+
+class _StatCardsRow extends StatelessWidget {
+  final InventoryOverview overview;
+  const _StatCardsRow({required this.overview});
+
+  @override
+  Widget build(BuildContext context) {
+    final cards = <Widget>[
+      _StatCard(
+        icon: Icons.inventory_2_outlined,
+        color: _Ui.tanDeep,
+        value: '${overview.totalItems}',
+        label: 'Total Items',
+        sublabel: '${overview.categories.length} categories',
+      ),
+      _StatCard(
+        icon: Icons.warning_amber_rounded,
+        color: _Ui.redText,
+        value: '${overview.lowCount + overview.criticalCount}',
+        label: 'Low Stock',
+        sublabel: 'Below 30% of max stock',
+      ),
+      _StatCard(
+        icon: Icons.schedule,
+        color: _Ui.amberText,
+        value: '${overview.expiringCount}',
+        label: 'Expiring Soon',
+        sublabel: 'Within 7 days',
+      ),
+      _StatCard(
+        icon: Icons.payments_outlined,
+        color: _Ui.greenText,
+        value: _fmtMoney(overview.totalValue),
+        label: 'Total Value',
+        sublabel: overview.pricedCount == overview.totalItems
+            ? 'All items priced'
+            : 'Based on ${overview.pricedCount} of ${overview.totalItems} priced items',
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const gap = 14.0;
+        final columns = constraints.maxWidth >= 900 ? 4 : (constraints.maxWidth >= 560 ? 2 : 1);
+        final width = (constraints.maxWidth - gap * (columns - 1)) / columns;
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: cards.map((c) => SizedBox(width: width, child: c)).toList(),
         );
       },
     );
   }
 }
 
-class _FilterPills extends StatelessWidget {
-  final String selected;
-  final Map<String, int> counts;
-  final ValueChanged<String> onChanged;
-  const _FilterPills({required this.selected, required this.counts, required this.onChanged});
-
-  static const _labels = {'all': 'All', 'low': 'Low stock', 'out': 'Out of stock'};
-
-  @override
-  Widget build(BuildContext context) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: _labels.entries.map((e) {
-        final isSelected = e.key == selected;
-        return Material(
-          color: isSelected ? _Ui.tanDeep : _Ui.searchFill,
-          borderRadius: BorderRadius.circular(20),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(20),
-            onTap: () => onChanged(e.key),
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Text(
-                '${e.value} (${counts[e.key] ?? 0})',
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500,
-                  color: isSelected ? Colors.white : _Ui.muted,
-                ),
-              ),
-            ),
-          ),
-        );
-      }).toList(),
-    );
-  }
-}
-
-class _LowBanner extends StatelessWidget {
-  final int count;
-  const _LowBanner({required this.count});
+class _StatCard extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String value;
+  final String label;
+  final String sublabel;
+  const _StatCard({required this.icon, required this.color, required this.value, required this.label, required this.sublabel});
 
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(color: const Color(0xFFFFEBEE), borderRadius: BorderRadius.circular(12)),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: _Ui.border)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, size: 20, color: color),
+          ),
+          const SizedBox(height: 12),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: _Ui.ink)),
+          ),
+          const SizedBox(height: 2),
+          Text(label, style: const TextStyle(fontSize: 12, color: _Ui.muted)),
+          const SizedBox(height: 4),
+          Text(sublabel, style: TextStyle(fontSize: 11, color: color)),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Category pills
+// ---------------------------------------------------------------------------
+
+class _CategoryPills extends StatelessWidget {
+  final int totalItems;
+  final List<InventoryCategoryCount> categories;
+  final String selected;
+  final ValueChanged<String> onSelected;
+  const _CategoryPills({required this.totalItems, required this.categories, required this.selected, required this.onSelected});
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       child: Row(
         children: [
-          const Icon(Icons.warning_amber_rounded, size: 18, color: _Ui.redText),
-          const SizedBox(width: 10),
-          Expanded(
+          _pill('All', 'All Items', totalItems),
+          for (final c in categories) ...[
+            const SizedBox(width: 8),
+            _pill(c.category, c.category, c.count),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _pill(String key, String label, int count) {
+    final isSelected = key == selected;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: Material(
+        color: isSelected ? _Ui.tanDeep : _Ui.pillIdle,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: () => onSelected(key),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
             child: Text(
-              count == 1 ? '1 item below 30% stock level' : '$count items below 30% stock level',
-              style: const TextStyle(fontSize: 13, color: _Ui.redText),
+              '$label ($count)',
+              style: TextStyle(fontSize: 12, fontWeight: isSelected ? FontWeight.w600 : FontWeight.w500, color: isSelected ? Colors.white : _Ui.ink),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Items table
+// ---------------------------------------------------------------------------
+
+class _ItemsTableHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _Ui.muted);
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 640) return const SizedBox.shrink();
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: const [
+              SizedBox(width: 40 + 10), // thumbnail + gap
+              Expanded(flex: 3, child: Text('ITEM', style: style)),
+              Expanded(flex: 2, child: Text('CATEGORY', style: style)),
+              Expanded(flex: 2, child: Text('CURRENT STOCK', style: style)),
+              Expanded(flex: 2, child: Text('STATUS', style: style)),
+              Expanded(flex: 2, child: Text('LAST UPDATED', style: style)),
+              SizedBox(width: 32),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ItemRow extends StatelessWidget {
+  final InventoryItem item;
+  final VoidCallback onTap;
+  final VoidCallback? onAddDelivery;
+  const _ItemRow({required this.item, required this.onTap, required this.onAddDelivery});
+
+  @override
+  Widget build(BuildContext context) {
+    final style = _severityStyle(item.severity);
+    final thumbnail = Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(color: _Ui.tanTint, borderRadius: BorderRadius.circular(10)),
+      child: Icon(_categoryIcon(item.category), size: 20, color: _Ui.tanDeep),
+    );
+    final badge = Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: style.bg, borderRadius: BorderRadius.circular(20)),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(width: 6, height: 6, decoration: BoxDecoration(color: style.dot, shape: BoxShape.circle)),
+          const SizedBox(width: 6),
+          Text(style.label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: style.fg)),
+        ],
+      ),
+    );
+    final menu = PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, size: 18, color: _Ui.muted),
+      onSelected: (v) {
+        if (v == 'open') onTap();
+        if (v == 'delivery' && onAddDelivery != null) onAddDelivery!();
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'open', child: Text('View details')),
+        if (onAddDelivery != null) const PopupMenuItem(value: 'delivery', child: Text('Add delivery')),
+      ],
+    );
+
+    return Material(
+      color: Colors.white,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 640;
+              if (wide) {
+                return Row(
+                  children: [
+                    thumbnail,
+                    const SizedBox(width: 10),
+                    Expanded(
+                      flex: 3,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(item.ingredientName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _Ui.ink)),
+                          Text(item.unit, style: const TextStyle(fontSize: 11, color: _Ui.muted)),
+                        ],
+                      ),
+                    ),
+                    Expanded(flex: 2, child: Text(item.category.isEmpty ? 'Uncategorized' : item.category, style: const TextStyle(fontSize: 12, color: _Ui.ink))),
+                    Expanded(flex: 2, child: Text('${_fmtQty(item.quantity)} ${item.unit}', style: const TextStyle(fontSize: 12, color: _Ui.ink))),
+                    Expanded(flex: 2, child: Align(alignment: Alignment.centerLeft, child: badge)),
+                    Expanded(flex: 2, child: Text(_formatLastUpdated(item.lastUpdated), style: const TextStyle(fontSize: 11, color: _Ui.muted))),
+                    SizedBox(width: 32, child: menu),
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  thumbnail,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(item.ingredientName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _Ui.ink)),
+                        Text('${item.category.isEmpty ? 'Uncategorized' : item.category} · ${_fmtQty(item.quantity)} ${item.unit}', style: const TextStyle(fontSize: 11, color: _Ui.muted)),
+                        const SizedBox(height: 4),
+                        Wrap(spacing: 8, runSpacing: 4, crossAxisAlignment: WrapCrossAlignment.center, children: [badge, Text(_formatLastUpdated(item.lastUpdated), style: const TextStyle(fontSize: 11, color: _Ui.muted))]),
+                      ],
+                    ),
+                  ),
+                  menu,
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _Pagination extends StatelessWidget {
+  final int total;
+  final int page;
+  final int pageCount;
+  final int perPage;
+  final ValueChanged<int> onPage;
+  const _Pagination({required this.total, required this.page, required this.pageCount, required this.perPage, required this.onPage});
+
+  @override
+  Widget build(BuildContext context) {
+    final start = total == 0 ? 0 : page * perPage + 1;
+    final end = ((page + 1) * perPage).clamp(0, total);
+
+    final pageButtons = <Widget>[];
+    for (var i = 0; i < pageCount; i++) {
+      final selected = i == page;
+      pageButtons.add(
+        Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Material(
+            color: selected ? _Ui.tanDeep : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () => onPage(i),
+              child: Container(
+                width: 30,
+                height: 30,
+                alignment: Alignment.center,
+                child: Text('${i + 1}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: selected ? Colors.white : _Ui.ink)),
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Wrap(
+      alignment: WrapAlignment.spaceBetween,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        Text('Showing $start-$end of $total items', style: const TextStyle(fontSize: 12, color: _Ui.muted)),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(mainAxisSize: MainAxisSize.min, children: pageButtons),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar: Stock Overview donut
+// ---------------------------------------------------------------------------
+
+class _StockOverviewCard extends StatelessWidget {
+  final InventoryOverview overview;
+  const _StockOverviewCard({required this.overview});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = overview.totalItems;
+    final slices = [
+      ('In Stock', overview.okCount, _Ui.green),
+      ('Low Stock', overview.lowCount, const Color(0xFFE0A400)),
+      ('Critical', overview.criticalCount, _Ui.redText),
+      ('Out of Stock', overview.outCount, const Color(0xFF8D8D8D)),
+    ].where((s) => s.$2 > 0).toList();
+
+    return _SidebarCard(
+      title: 'Stock Overview',
+      child: total == 0
+          ? const Padding(padding: EdgeInsets.symmetric(vertical: 24), child: Center(child: Text('No items yet.', style: TextStyle(color: _Ui.muted))))
+          : Column(
+              children: [
+                SizedBox(
+                  height: 180,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      PieChart(
+                        PieChartData(
+                          sectionsSpace: 2,
+                          centerSpaceRadius: 54,
+                          sections: [
+                            for (final s in slices)
+                              PieChartSectionData(value: s.$2.toDouble(), color: s.$3, radius: 26, title: '', showTitle: false),
+                          ],
+                        ),
+                      ),
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('$total', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: _Ui.ink)),
+                          const Text('Total Items', style: TextStyle(fontSize: 11, color: _Ui.muted)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 14),
+                for (final s in slices)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    child: Row(
+                      children: [
+                        Container(width: 9, height: 9, decoration: BoxDecoration(color: s.$3, shape: BoxShape.circle)),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(s.$1, style: const TextStyle(fontSize: 12, color: _Ui.ink))),
+                        Text('${s.$2} (${(s.$2 / total * 100).round()}%)', style: const TextStyle(fontSize: 12, color: _Ui.muted)),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar: Recent Activity
+// ---------------------------------------------------------------------------
+
+class _RecentActivityCard extends StatelessWidget {
+  final List<InventoryActivity> activity;
+  const _RecentActivityCard({required this.activity});
+
+  @override
+  Widget build(BuildContext context) {
+    return _SidebarCard(
+      title: 'Recent Activity',
+      child: activity.isEmpty
+          ? const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('No stock changes recorded yet.', style: TextStyle(fontSize: 12, color: _Ui.muted)))
+          : Column(
+              children: [
+                for (var i = 0; i < activity.length; i++) ...[
+                  _ActivityRow(entry: activity[i]),
+                  if (i < activity.length - 1) const SizedBox(height: 12),
+                ],
+              ],
+            ),
+    );
+  }
+}
+
+class _ActivityRow extends StatelessWidget {
+  final InventoryActivity entry;
+  const _ActivityRow({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    final isIn = entry.quantity >= 0;
+    final color = entry.type == 'usage' ? _Ui.redText : (isIn ? _Ui.greenText : _Ui.amberText);
+    final verb = entry.type == 'delivery'
+        ? 'added to inventory'
+        : entry.type == 'usage'
+            ? 'used from inventory'
+            : 'stock adjusted';
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 26,
+          height: 26,
+          margin: const EdgeInsets.only(top: 1),
+          decoration: BoxDecoration(color: color.withOpacity(0.14), shape: BoxShape.circle),
+          child: Icon(isIn ? Icons.add : Icons.remove, size: 14, color: color),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text.rich(
+                TextSpan(
+                  style: const TextStyle(fontSize: 12.5, color: _Ui.ink),
+                  children: [
+                    TextSpan(text: entry.ingredientName, style: const TextStyle(fontWeight: FontWeight.w600)),
+                    TextSpan(text: ' $verb'),
+                  ],
+                ),
+              ),
+              Text('${isIn ? '+' : ''}${_fmtQty(entry.quantity)} · ${_formatTime(entry.time)}', style: const TextStyle(fontSize: 11, color: _Ui.muted)),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar: Action Needed
+// ---------------------------------------------------------------------------
+
+class _ActionNeededCard extends StatelessWidget {
+  final InventoryItem item;
+  final VoidCallback onRestock;
+  const _ActionNeededCard({required this.item, required this.onRestock});
+
+  @override
+  Widget build(BuildContext context) {
+    final verb = item.isOut ? 'is out of stock' : 'is running low';
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(color: const Color(0xFFFFF4E8), borderRadius: BorderRadius.circular(16), border: Border.all(color: const Color(0xFFF3D9B8))),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.priority_high_rounded, size: 18, color: _Ui.amberText),
+              const SizedBox(width: 8),
+              const Text('Action Needed', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _Ui.amberText)),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '${item.ingredientName} $verb (${_fmtQty(item.quantity)} ${item.unit} left). Consider ordering soon to avoid stockouts.',
+            style: const TextStyle(fontSize: 12.5, color: _Ui.ink, height: 1.4),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: onRestock,
+              icon: const Icon(Icons.add_shopping_cart, size: 16),
+              label: const Text('Restock this item'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: _Ui.tanDeep,
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              ),
             ),
           ),
         ],
@@ -472,6 +1007,32 @@ class _LowBanner extends StatelessWidget {
     );
   }
 }
+
+class _SidebarCard extends StatelessWidget {
+  final String title;
+  final Widget child;
+  const _SidebarCard({required this.title, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: _Ui.border)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: _Ui.ink)),
+          const SizedBox(height: 12),
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Empty / error states
+// ---------------------------------------------------------------------------
 
 class _EmptyState extends StatelessWidget {
   final bool hasItems;
@@ -483,7 +1044,7 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 48),
       child: Center(
         child: Text(
-          hasItems ? 'No items match your search or filter.' : 'No inventory items yet. Tap "Add item" to start.',
+          hasItems ? 'No items match your search or filter.' : 'No inventory items yet. Tap "Add Item" to start.',
           style: const TextStyle(color: _Ui.muted),
         ),
       ),
@@ -512,164 +1073,6 @@ class _ErrorView extends StatelessWidget {
             const SizedBox(height: 16),
             ElevatedButton(onPressed: onRetry, child: const Text('Try again')),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Item card
-// ---------------------------------------------------------------------------
-
-class _StatusBadge extends StatelessWidget {
-  final String status;
-  const _StatusBadge({required this.status});
-
-  @override
-  Widget build(BuildContext context) {
-    final Color bg;
-    final Color fg;
-    final String label;
-    switch (status) {
-      case 'out':
-        bg = const Color(0xFFFFCDD2);
-        fg = const Color(0xFFC62828);
-        label = 'Out of stock';
-        break;
-      case 'low':
-        bg = const Color(0xFFFFEBEE);
-        fg = _Ui.redText;
-        label = 'Low stock';
-        break;
-      default:
-        bg = const Color(0xFFE8F5E9);
-        fg = _Ui.greenText;
-        label = 'In stock';
-    }
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(20)),
-      child: Text(label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: fg)),
-    );
-  }
-}
-
-class _InventoryCard extends StatelessWidget {
-  final InventoryItem item;
-  final VoidCallback onTap;
-  final VoidCallback onAddDelivery;
-  const _InventoryCard({required this.item, required this.onTap, required this.onAddDelivery});
-
-  @override
-  Widget build(BuildContext context) {
-    final needs = item.needsRestock;
-    final barColor = _barColor(item);
-
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(16),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(16),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(16), border: Border.all(color: _Ui.border)),
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final narrow = constraints.maxWidth < 520;
-              final badge = _StatusBadge(status: item.status);
-              final amount = Text(
-                '${_fmtQty(item.quantity)} / ${_fmtWhole(item.capacity)} ${item.unit}',
-                style: const TextStyle(fontSize: 13, color: _Ui.muted),
-              );
-              final Widget? plus = needs
-                  ? IconButton(
-                      tooltip: 'Add delivery',
-                      onPressed: onAddDelivery,
-                      icon: const Icon(Icons.add_circle_outline, color: _Ui.green),
-                      visualDensity: VisualDensity.compact,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    )
-                  : null;
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Container(
-                        width: 42,
-                        height: 42,
-                        decoration: BoxDecoration(
-                          color: needs ? const Color(0xFFFFEBEE) : _Ui.tanTint,
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Icon(Icons.inventory_2_outlined, size: 22, color: needs ? _Ui.redText : _Ui.tanDeep),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              item.ingredientName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w500, color: _Ui.ink),
-                            ),
-                            const SizedBox(height: 2),
-                            Text(
-                              item.category.isEmpty ? 'Uncategorized' : item.category,
-                              style: const TextStyle(fontSize: 13, color: _Ui.muted),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (!narrow) ...[
-                        badge,
-                        const SizedBox(width: 12),
-                        amount,
-                        if (plus != null) ...[const SizedBox(width: 8), plus],
-                      ],
-                    ],
-                  ),
-                  if (narrow) ...[
-                    const SizedBox(height: 10),
-                    Wrap(
-                      spacing: 12,
-                      runSpacing: 6,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [badge, amount, if (plus != null) plus],
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Text('${item.percent}% remaining', style: const TextStyle(fontSize: 12, color: _Ui.muted)),
-                      const Spacer(),
-                      Text(
-                        '${item.percent}%',
-                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _percentColor(item)),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 6),
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
-                    child: LinearProgressIndicator(
-                      value: item.fraction,
-                      minHeight: 6,
-                      color: barColor,
-                      backgroundColor: _Ui.track,
-                    ),
-                  ),
-                ],
-              );
-            },
-          ),
         ),
       ),
     );
@@ -802,14 +1205,19 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
   late final TextEditingController _max = TextEditingController(
     text: (widget.existing != null && widget.existing!.maxStock > 0) ? _plain(widget.existing!.maxStock) : '',
   );
+  late final TextEditingController _cost = TextEditingController(
+    text: (widget.existing != null && widget.existing!.unitCost > 0) ? _plain(widget.existing!.unitCost) : '',
+  );
   String? _unit;
   String? _category;
+  DateTime? _expiryDate;
 
   String? _nameError;
   String? _currentError;
   String? _maxError;
   String? _unitError;
   String? _categoryError;
+  String? _costError;
   String? _error;
   bool _saving = false;
 
@@ -821,6 +1229,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     _unit = widget.existing?.unit;
     final category = widget.existing?.category ?? '';
     _category = category.isEmpty ? null : category;
+    final expiry = widget.existing?.expiryDate;
+    _expiryDate = (expiry != null && expiry.isNotEmpty) ? DateTime.tryParse(expiry) : null;
   }
 
   @override
@@ -828,19 +1238,33 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     _name.dispose();
     _current.dispose();
     _max.dispose();
+    _cost.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickExpiryDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _expiryDate ?? DateTime.now(),
+      firstDate: DateTime.now().subtract(const Duration(days: 1)),
+      lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
+    );
+    if (picked != null) setState(() => _expiryDate = picked);
   }
 
   Future<void> _submit() async {
     final name = _name.text.trim();
     final max = double.tryParse(_max.text.trim());
     final current = _editing ? null : double.tryParse(_current.text.trim());
+    final costText = _cost.text.trim();
+    final cost = costText.isEmpty ? 0.0 : double.tryParse(costText);
 
     String? nameError;
     String? currentError;
     String? maxError;
     String? unitError;
     String? categoryError;
+    String? costError;
 
     if (name.isEmpty) nameError = 'Enter the item name';
     if (max == null || max <= 0) maxError = 'Enter a max stock above zero';
@@ -853,6 +1277,7 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     }
     if (_unit == null) unitError = 'Choose a unit';
     if (!_editing && _category == null) categoryError = 'Choose a category';
+    if (costText.isNotEmpty && (cost == null || cost < 0)) costError = 'Enter a cost of zero or more';
 
     setState(() {
       _nameError = nameError;
@@ -860,9 +1285,12 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
       _maxError = maxError;
       _unitError = unitError;
       _categoryError = categoryError;
+      _costError = costError;
       _error = null;
     });
-    if ([nameError, currentError, maxError, unitError, categoryError].any((e) => e != null)) return;
+    if ([nameError, currentError, maxError, unitError, categoryError, costError].any((e) => e != null)) return;
+
+    final expiryStr = _expiryDate == null ? null : DateFormat('yyyy-MM-dd').format(_expiryDate!);
 
     setState(() => _saving = true);
     try {
@@ -874,6 +1302,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
           unit: _unit!,
           maxStock: max!,
           category: _category ?? '',
+          expiryDate: expiryStr ?? '',
+          unitCost: cost,
         );
       } else {
         saved = await widget.repo.create(
@@ -882,6 +1312,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
           unit: _unit!,
           maxStock: max,
           category: _category ?? '',
+          expiryDate: expiryStr,
+          unitCost: cost,
         );
       }
       if (mounted) Navigator.of(context).pop(saved);
@@ -914,12 +1346,30 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     // Keep a value that is no longer in the standard list (an older item) selectable.
     final all = [...options, if (value != null && !options.contains(value)) value];
     return DropdownButtonFormField<String>(
-      value: value,
+      initialValue: value,
       isExpanded: true,
       hint: Text(hint, style: const TextStyle(color: _Ui.muted)),
       decoration: _fieldDecoration(error: error),
       items: all.map((o) => DropdownMenuItem(value: o, child: Text(o))).toList(),
       onChanged: _saving ? null : onChanged,
+    );
+  }
+
+  Widget _expiryField() {
+    return InkWell(
+      onTap: _saving ? null : _pickExpiryDate,
+      borderRadius: BorderRadius.circular(14),
+      child: InputDecorator(
+        decoration: _fieldDecoration(icon: Icons.event_outlined).copyWith(
+          suffixIcon: _expiryDate == null
+              ? null
+              : IconButton(icon: const Icon(Icons.close, size: 18), onPressed: _saving ? null : () => setState(() => _expiryDate = null)),
+        ),
+        child: Text(
+          _expiryDate == null ? 'No expiry date (optional)' : DateFormat('MMM d, yyyy').format(_expiryDate!),
+          style: TextStyle(color: _expiryDate == null ? _Ui.muted : _Ui.ink, fontSize: 14),
+        ),
+      ),
     );
   }
 
@@ -948,6 +1398,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
           _categoryError = null;
         }),
       ),
+      _textField(_cost, 'Cost per unit (optional)', icon: Icons.payments_outlined, error: _costError, number: true),
+      _expiryField(),
     ];
 
     return Dialog(
@@ -991,7 +1443,8 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
               ),
               const SizedBox(height: 10),
               Text(
-                'Items count as low stock at 30% of max stock or less.',
+                'Items count as low stock at 30% of max stock or less, and critical at 10% or less. '
+                'Cost and expiry date are both optional — leave them blank if you\'re not tracking them yet.',
                 style: const TextStyle(fontSize: 12, color: _Ui.muted),
               ),
               if (_error != null) ...[
@@ -1164,6 +1617,7 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
   @override
   Widget build(BuildContext context) {
     final maxHeight = MediaQuery.of(context).size.height * 0.88;
+    final style = _severityStyle(_item.severity);
     final actionStyle = OutlinedButton.styleFrom(
       foregroundColor: _Ui.tanDeep,
       side: const BorderSide(color: _Ui.tan),
@@ -1211,7 +1665,11 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
               const SizedBox(height: 16),
               Row(
                 children: [
-                  _StatusBadge(status: _item.status),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+                    decoration: BoxDecoration(color: style.bg, borderRadius: BorderRadius.circular(20)),
+                    child: Text(style.label, style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: style.fg)),
+                  ),
                   const SizedBox(width: 12),
                   Text(
                     '${_fmtQty(_item.quantity)} / ${_fmtWhole(_item.capacity)} ${_item.unit}',
@@ -1220,7 +1678,7 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
                   const Spacer(),
                   Text(
                     '${_item.percent}%',
-                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _percentColor(_item)),
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: style.fg),
                   ),
                 ],
               ),
@@ -1230,9 +1688,24 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
                 child: LinearProgressIndicator(
                   value: _item.fraction,
                   minHeight: 6,
-                  color: _barColor(_item),
+                  color: style.dot,
                   backgroundColor: _Ui.track,
                 ),
+              ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 16,
+                runSpacing: 6,
+                children: [
+                  if (_item.unitCost > 0)
+                    _DetailFact(label: 'Stock value', value: _fmtMoney(_item.stockValue)),
+                  if (_item.hasExpiryDate)
+                    _DetailFact(
+                      label: _item.isExpired ? 'Expired' : (_item.isExpiringSoon ? 'Expires soon' : 'Expires'),
+                      value: DateFormat('MMM d, yyyy').format(DateTime.parse(_item.expiryDate!)),
+                      valueColor: _item.isExpired || _item.isExpiringSoon ? _Ui.redText : null,
+                    ),
+                ],
               ),
               const SizedBox(height: 18),
               Wrap(
@@ -1289,6 +1762,25 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _DetailFact extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+  const _DetailFact({required this.label, required this.value, this.valueColor});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label, style: const TextStyle(fontSize: 11, color: _Ui.muted)),
+        Text(value, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: valueColor ?? _Ui.ink)),
+      ],
     );
   }
 }

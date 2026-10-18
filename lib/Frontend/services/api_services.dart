@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:async';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'package:rms/Frontend/patterns/singleton/session_manager.dart';
@@ -26,7 +27,7 @@ class ApiService {
       return body;
     }
     final message = body is Map && body['error'] != null ? body['error'] : 'Request failed (${res.statusCode})';
-    throw ApiException(message, res.statusCode);
+    throw ApiException(message, res.statusCode, body is Map ? Map<String, dynamic>.from(body) : null);
   }
 
   /// Retries a request up to 2 extra times if it fails with a network
@@ -79,6 +80,26 @@ class ApiService {
     return _handle(res);
   }
 
+  /// For endpoints that return a binary file (PDF, Excel) instead of JSON —
+  /// used for "Download Report" style buttons. Unlike the other methods this
+  /// never runs the body through jsonDecode, since a successful response here
+  /// isn't JSON; an error response (4xx/5xx) still is, so that path is
+  /// decoded as usual to surface a real error message.
+  Future<Uint8List> getBytes(String path, {Map<String, dynamic>? query}) async {
+    final res = await _withRetry(() => http.get(_uri(path, query), headers: _headers));
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return res.bodyBytes;
+    }
+    String message = 'Request failed (${res.statusCode})';
+    try {
+      final body = res.body.isNotEmpty ? jsonDecode(res.body) : null;
+      if (body is Map && body['error'] != null) message = body['error'];
+    } catch (_) {
+      // Error body wasn't JSON either; keep the generic message.
+    }
+    throw ApiException(message, res.statusCode);
+  }
+
   MediaType _mediaTypeFor(String filename) {
     final ext = filename.toLowerCase().split('.').last;
     switch (ext) {
@@ -112,7 +133,13 @@ class ApiService {
 class ApiException implements Exception {
   final String message;
   final int statusCode;
-  ApiException(this.message, this.statusCode);
+
+  /// The full decoded error response, when the server sent extra fields
+  /// beyond `error` (e.g. login lockout details: lockedUntil, lockoutMinutes,
+  /// justLocked, attemptsRemaining). Null if the body wasn't a JSON object.
+  final Map<String, dynamic>? body;
+
+  ApiException(this.message, this.statusCode, [this.body]);
 
   @override
   String toString() => message;
