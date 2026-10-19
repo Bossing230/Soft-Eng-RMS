@@ -21,12 +21,9 @@ class _Ui {
   static const ink = Color(0xFF2B2B2B);
   static const muted = Color(0xFF7A7A7A);
   static const green = Color(0xFF4CAF50);
-  static const amber = Color(0xFFFFC107);
-  static const red = Color(0xFFF44336);
   static const redText = Color(0xFFE53935);
   static const amberText = Color(0xFFB07A00);
   static const greenText = Color(0xFF2E7D32);
-  static const blue = Color(0xFF2196F3);
 }
 
 /// Standard choices, so "kg", "Kg" and "kgs" don't become three different units.
