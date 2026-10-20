@@ -6,16 +6,20 @@ import 'package:rms/Frontend/services/auth_services.dart';
 
 import '../../core/routes/app_router.dart';
 
-enum _Step { confirm, code, newPassword, done }
+enum _Step { email, code, newPassword, done }
 
-/// The forgot-password flow, reached either from the persistent "Forgot
-/// password?" link on the login screen, or from the 3-wrong-passwords
-/// lockout dialog. The email address is never typed by the person — only
-/// ever the one already on the account — so this can't be used to redirect
-/// a reset to an address an attacker controls.
+final _emailRe = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
+
+/// The forgot-password flow: enter your email -> get a 6-digit code -> set a
+/// new password -> straight into your dashboard. Reached from the "Forgot
+/// password?" link on the login screen.
+///
+/// The code is always sent to the account's own email on file — the address
+/// typed here is only ever used to look that account up, never as a
+/// delivery address someone else could substitute — so this can't be used
+/// to redirect a reset to an address an attacker controls.
 class ForgotPasswordPage extends StatefulWidget {
-  final String username;
-  const ForgotPasswordPage({super.key, required this.username});
+  const ForgotPasswordPage({super.key});
 
   @override
   State<ForgotPasswordPage> createState() => _ForgotPasswordPageState();
@@ -23,25 +27,31 @@ class ForgotPasswordPage extends StatefulWidget {
 
 class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   final _auth = AuthService();
+  final _emailController = TextEditingController();
   final _codeController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
 
-  _Step _step = _Step.confirm;
+  _Step _step = _Step.email;
   bool _busy = false;
   String? _error;
+  String _email = '';
   String _maskedEmail = '';
   String _resetToken = '';
   String _confirmationNumber = '';
   int _resendCooldown = 0;
   Timer? _cooldownTimer;
+  Timer? _autoContinueTimer;
+  int _autoContinueSeconds = 0;
 
   @override
   void dispose() {
+    _emailController.dispose();
     _codeController.dispose();
     _passwordController.dispose();
     _confirmController.dispose();
     _cooldownTimer?.cancel();
+    _autoContinueTimer?.cancel();
     super.dispose();
   }
 
@@ -60,22 +70,51 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     });
   }
 
+  void _goToDashboard() {
+    _autoContinueTimer?.cancel();
+    if (mounted) AppRouter.goToRoleDashboard(context);
+  }
+
+  /// Shows the confirmation number for a few seconds, then continues on to
+  /// the dashboard by itself (the person can also tap through immediately).
+  void _startAutoContinue() {
+    const seconds = 4;
+    setState(() => _autoContinueSeconds = seconds);
+    _autoContinueTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) {
+        timer.cancel();
+        return;
+      }
+      setState(() => _autoContinueSeconds -= 1);
+      if (_autoContinueSeconds <= 0) {
+        timer.cancel();
+        _goToDashboard();
+      }
+    });
+  }
+
   Future<void> _sendCode() async {
+    final email = _emailController.text.trim();
+    if (!_emailRe.hasMatch(email)) {
+      setState(() => _error = 'Enter a valid email address.');
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
     });
     try {
-      final masked = await _auth.requestPasswordResetCode(widget.username);
+      final masked = await _auth.requestPasswordResetCode(email);
       if (!mounted) return;
       setState(() {
+        _email = email;
         _maskedEmail = masked;
         _step = _Step.code;
       });
       _startCooldown(60);
     } on ApiException catch (e) {
       final retry = e.body?['retryAfterSeconds'];
-      setState(() => _error = retry != null ? '${e.message}' : e.message);
+      setState(() => _error = e.message);
       if (retry is int) _startCooldown(retry);
     } catch (e) {
       setState(() => _error = 'Could not send the code: $e');
@@ -95,7 +134,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       _error = null;
     });
     try {
-      final token = await _auth.verifyPasswordResetCode(widget.username, code);
+      final token = await _auth.verifyPasswordResetCode(_email, code);
       if (!mounted) return;
       setState(() {
         _resetToken = token;
@@ -132,6 +171,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         _confirmationNumber = confirmation;
         _step = _Step.done;
       });
+      _startAutoContinue();
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
@@ -144,14 +184,14 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _step == _Step.done ? null : AppBar(title: const Text('Reset Password')),
+      appBar: _step == _Step.done ? null : AppBar(title: const Text('Forgot Password')),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: switch (_step) {
-              _Step.confirm => _confirmStep(),
+              _Step.email => _emailStep(),
               _Step.code => _codeStep(),
               _Step.newPassword => _newPasswordStep(),
               _Step.done => _doneStep(),
@@ -170,19 +210,27 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     );
   }
 
-  Widget _confirmStep() {
+  Widget _emailStep() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Icon(Icons.lock_reset, size: 48),
         const SizedBox(height: 16),
-        Text(
-          "We'll send a 6-digit verification code to the email address on file for ${widget.username}.",
+        const Text(
+          'Enter the email address on your account and we\'ll send you a 6-digit verification code.',
           textAlign: TextAlign.center,
         ),
+        const SizedBox(height: 20),
+        TextField(
+          controller: _emailController,
+          keyboardType: TextInputType.emailAddress,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Email address', prefixIcon: Icon(Icons.email_outlined)),
+          onSubmitted: (_) => _sendCode(),
+        ),
         _errorText(),
-        const SizedBox(height: 24),
+        const SizedBox(height: 20),
         ElevatedButton(
           onPressed: _busy ? null : _sendCode,
           child: _busy
@@ -208,6 +256,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           controller: _codeController,
           keyboardType: TextInputType.number,
           textAlign: TextAlign.center,
+          autofocus: true,
           maxLength: 6,
           style: const TextStyle(fontSize: 24, letterSpacing: 8),
           decoration: const InputDecoration(counterText: '', hintText: '••••••'),
@@ -226,6 +275,15 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           onPressed: (_busy || _resendCooldown > 0) ? null : _sendCode,
           child: Text(_resendCooldown > 0 ? 'Resend code in ${_resendCooldown}s' : 'Resend code'),
         ),
+        TextButton(
+          onPressed: _busy
+              ? null
+              : () => setState(() {
+                    _step = _Step.email;
+                    _error = null;
+                  }),
+          child: const Text('Use a different email'),
+        ),
       ],
     );
   }
@@ -242,6 +300,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         TextField(
           controller: _passwordController,
           obscureText: true,
+          autofocus: true,
           decoration: const InputDecoration(labelText: 'New password', prefixIcon: Icon(Icons.lock_outline)),
         ),
         const SizedBox(height: 12),
@@ -287,8 +346,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         ),
         const SizedBox(height: 24),
         ElevatedButton(
-          onPressed: () => AppRouter.goToRoleDashboard(context),
-          child: const Text('Continue to dashboard'),
+          onPressed: _goToDashboard,
+          child: Text(_autoContinueSeconds > 0 ? 'Continue to dashboard (${_autoContinueSeconds}s)' : 'Continue to dashboard'),
         ),
       ],
     );

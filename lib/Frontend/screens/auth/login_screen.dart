@@ -22,15 +22,8 @@ class _LoginScreenState extends State<LoginScreen> {
   bool _obscurePassword = true;
 
   void _openForgotPassword() {
-    final username = _usernameController.text.trim();
-    if (username.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter your username first, then tap "Forgot password?" again.')),
-      );
-      return;
-    }
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => ForgotPasswordPage(username: username)),
+      MaterialPageRoute(builder: (_) => const ForgotPasswordPage()),
     );
   }
 

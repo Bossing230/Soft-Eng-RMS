@@ -40,20 +40,20 @@ class AuthService {
 
   // --- Forgot password (email + 6-digit code) ------------------------------
 
-  /// Sends a fresh 6-digit code to the email already on file for [username].
+  /// Sends a fresh 6-digit code to [email], if it belongs to an account.
   /// Returns the masked email it was sent to (e.g. "ju**@example.com").
-  /// Throws [ApiException] with statusCode 429 if called again too soon —
-  /// check `e.body['retryAfterSeconds']`.
-  Future<String> requestPasswordResetCode(String username) async {
-    final data = await _api.post('/auth/forgot-password/request', body: {'username': username});
+  /// Throws [ApiException] (404 no account with that email, 429 if called
+  /// again too soon — check `e.body['retryAfterSeconds']`).
+  Future<String> requestPasswordResetCode(String email) async {
+    final data = await _api.post('/auth/forgot-password/request', body: {'email': email});
     return data['maskedEmail'] as String;
   }
 
-  /// Checks [code] for [username]. On success returns a short-lived reset
+  /// Checks [code] for [email]. On success returns a short-lived reset
   /// token to pass to [resetPasswordWithCode]. Throws [ApiException]
   /// (401 wrong code, 410 expired, 429 too many tries) otherwise.
-  Future<String> verifyPasswordResetCode(String username, String code) async {
-    final data = await _api.post('/auth/forgot-password/verify', body: {'username': username, 'code': code});
+  Future<String> verifyPasswordResetCode(String email, String code) async {
+    final data = await _api.post('/auth/forgot-password/verify', body: {'email': email, 'code': code});
     return data['resetToken'] as String;
   }
 
