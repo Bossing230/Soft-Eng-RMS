@@ -4,12 +4,12 @@
 class AppConstants {
   static const String apiBaseUrl = String.fromEnvironment(
     'API_BASE_URL',
-    defaultValue: 'http://localhost:4000/api',
+    defaultValue: 'https://soft-eng-rms-backend.onrender.com/api',
   );
 
   static const String socketUrl = String.fromEnvironment(
     'SOCKET_URL',
-    defaultValue: 'http://localhost:4000',
+    defaultValue: 'https://soft-eng-rms-backend.onrender.com',
   );
 
   static const String appName = 'Restaurant Management System';
