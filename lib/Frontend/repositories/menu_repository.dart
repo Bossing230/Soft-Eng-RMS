@@ -31,6 +31,9 @@ class MenuRepository {
     return data['imageUrl'] as String;
   }
 
+  /// [ingredients] is the dish's recipe: [{ 'inventoryId': 3, 'quantity': 30 }, ...],
+  /// each quantity in that inventory item's own unit, for ONE serving.
+  /// Leave it out (or empty) for a dish whose stock should not be tracked.
   Future<MenuItem> create({
     required int categoryId,
     required String foodName,
@@ -38,6 +41,7 @@ class MenuRepository {
     required double price,
     String? image,
     String? station,
+    List<Map<String, dynamic>>? ingredients,
   }) async {
     final data = await _api.post('/menu', body: {
       'categoryId': categoryId,
@@ -46,6 +50,7 @@ class MenuRepository {
       'price': price,
       if (image != null) 'image': image,
       if (station != null) 'station': station,
+      if (ingredients != null && ingredients.isNotEmpty) 'ingredients': ingredients,
     });
     return MenuItem.fromJson(data);
   }
@@ -64,4 +69,25 @@ class MenuRepository {
   }
 
   Future<void> delete(int menuId) => _api.delete('/menu/$menuId');
+
+  // ---- Recipes ----
+
+  /// Inventory items a recipe can use, each with inventory_id, ingredient_name,
+  /// unit, unit_cost (per unit) and quantity (current stock).
+  Future<List<Map<String, dynamic>>> getRecipeIngredientOptions() async {
+    final data = await _api.get('/recipes/ingredients');
+    return (data as List).cast<Map<String, dynamic>>();
+  }
+
+  /// A dish's recipe with cost_per_serving and servings_available.
+  Future<Map<String, dynamic>> getRecipe(int menuId) async {
+    final data = await _api.get('/recipes/$menuId');
+    return Map<String, dynamic>.from(data);
+  }
+
+  /// Replaces a dish's whole recipe. An empty list removes it.
+  Future<Map<String, dynamic>> saveRecipe(int menuId, List<Map<String, dynamic>> ingredients) async {
+    final data = await _api.put('/recipes/$menuId', body: {'ingredients': ingredients});
+    return Map<String, dynamic>.from(data);
+  }
 }

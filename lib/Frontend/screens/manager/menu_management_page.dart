@@ -3,6 +3,7 @@ import 'package:rms/Frontend/models/menu.dart';
 import '../../repositories/menu_repository.dart';
 import '../../widgets/menu_card.dart';
 import '../shared/add_menu_item_page.dart';
+import '../shared/edit_recipe_page.dart';
 
 class MenuManagementPage extends StatefulWidget {
   const MenuManagementPage({super.key});
@@ -87,6 +88,17 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
       MaterialPageRoute(builder: (_) => AddMenuItemPage(categories: _categories)),
     );
     if (created == true) _load();
+  }
+
+  /// Opens the recipe editor for a dish that already exists.
+  Future<void> _openRecipe(MenuItem item) async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => EditRecipePage(item: item)),
+    );
+    if (saved == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Recipe saved for ${item.foodName}.')));
+    }
   }
 
   Widget _categoryPill({required String label, required bool selected, required VoidCallback onTap}) {
@@ -184,12 +196,33 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
                       itemCount: _filteredItems.length,
                       itemBuilder: (_, i) {
                         final item = _filteredItems[i];
-                        return MenuCard(
-                          item: item,
-                          onToggleAvailability: () async {
-                            await _repo.setAvailability(item.menuId, !item.isAvailable);
-                            _load();
-                          },
+                        return Stack(
+                          children: [
+                            MenuCard(
+                              item: item,
+                              onToggleAvailability: () async {
+                                await _repo.setAvailability(item.menuId, !item.isAvailable);
+                                _load();
+                              },
+                            ),
+                            // Opens this dish's recipe (ingredients taken from inventory per order).
+                            Positioned(
+                              top: 8,
+                              right: 8,
+                              child: Material(
+                                color: Colors.white,
+                                shape: const CircleBorder(),
+                                elevation: 1,
+                                child: IconButton(
+                                  tooltip: 'Recipe',
+                                  icon: const Icon(Icons.menu_book_outlined, size: 18),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints.tightFor(width: 34, height: 34),
+                                  onPressed: () => _openRecipe(item),
+                                ),
+                              ),
+                            ),
+                          ],
                         );
                       },
                     ),

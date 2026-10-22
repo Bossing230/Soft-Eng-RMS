@@ -26,8 +26,10 @@ class _Ui {
   static const greenText = Color(0xFF2E7D32);
 }
 
-/// Standard choices, so "kg", "Kg" and "kgs" don't become three different units.
-const _units = ['kg', 'g', 'L', 'ml', 'pcs', 'pack', 'can', 'bottle', 'sack', 'box'];
+/// Standard choices, so "g", "G" and "grams" don't become three different units.
+/// Ingredients measured by weight or volume use g / ml (not kg / L) so recipes
+/// can use small amounts like 30 g. Countable things use pcs, pack, can, etc.
+const _units = ['g', 'ml', 'pcs', 'pack', 'can', 'bottle', 'box', 'sack'];
 const _categories = [
   'Meat',
   'Seafood',
@@ -917,8 +919,10 @@ class _ActivityRow extends StatelessWidget {
     final verb = entry.type == 'delivery'
         ? 'added to inventory'
         : entry.type == 'usage'
-            ? 'used from inventory'
-            : 'stock adjusted';
+            ? (entry.orderId != null ? 'used for order #${entry.orderId}' : 'used from inventory')
+            : entry.type == 'return'
+                ? (entry.orderId != null ? 'returned from order #${entry.orderId}' : 'returned to inventory')
+                : 'stock adjusted';
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1441,7 +1445,9 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
               const SizedBox(height: 10),
               Text(
                 'Items count as low stock at 30% of max stock or less, and critical at 10% or less. '
-                'Cost and expiry date are both optional — leave them blank if you\'re not tracking them yet.',
+                'Measure ingredients by weight or volume in g or ml (not kg or L) so recipes can use small amounts. '
+                'Changing the unit does not convert the numbers, so use Correct count afterwards. '
+                "Cost and expiry date are both optional, leave them blank if you're not tracking them yet.",
                 style: const TextStyle(fontSize: 12, color: _Ui.muted),
               ),
               if (_error != null) ...[
@@ -1801,7 +1807,12 @@ class _HistoryRow extends StatelessWidget {
       case 'usage':
         icon = Icons.remove_circle_outline;
         color = _Ui.redText;
-        label = 'Usage';
+        label = entry.orderId != null ? 'Used for order #${entry.orderId}' : 'Usage';
+        break;
+      case 'return':
+        icon = Icons.undo;
+        color = _Ui.greenText;
+        label = entry.orderId != null ? 'Returned (order #${entry.orderId} cancelled)' : 'Returned';
         break;
       default:
         icon = Icons.tune;

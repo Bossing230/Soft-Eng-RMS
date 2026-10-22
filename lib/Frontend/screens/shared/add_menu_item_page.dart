@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../repositories/menu_repository.dart';
+import '../../widgets/recipe_editor.dart';
 
 // Must match Backend/constants/stations.js.
 const _stations = ['Grill', 'Pasta', 'Salad', 'Desserts', 'Drinks'];
@@ -22,6 +23,7 @@ class AddMenuItemPage extends StatefulWidget {
 
 class _AddMenuItemPageState extends State<AddMenuItemPage> {
   final _repo = MenuRepository();
+  final _recipeKey = GlobalKey<RecipeEditorState>();
   final _nameCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
@@ -63,6 +65,13 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Food name and price are required')));
       return;
     }
+
+    // The recipe (may be empty: the dish just isn't stock-tracked). Null means
+    // an ingredient row is half filled in, and the editor already said so.
+    final editor = _recipeKey.currentState;
+    final ingredients = editor == null ? <Map<String, dynamic>>[] : editor.collect();
+    if (ingredients == null) return;
+
     setState(() => _submitting = true);
 
     try {
@@ -77,6 +86,7 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
         price: double.tryParse(_priceCtrl.text) ?? 0,
         image: imageUrl,
         station: _station,
+        ingredients: ingredients,
       );
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
@@ -123,7 +133,12 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                 const SizedBox(height: 16),
                 TextField(controller: _descCtrl, decoration: const InputDecoration(labelText: 'Description', prefixIcon: Icon(Icons.notes))),
                 const SizedBox(height: 16),
-                TextField(controller: _priceCtrl, decoration: const InputDecoration(labelText: 'Price', prefixIcon: Icon(Icons.attach_money)), keyboardType: TextInputType.number),
+                TextField(
+                  controller: _priceCtrl,
+                  decoration: const InputDecoration(labelText: 'Price', prefixIcon: Icon(Icons.attach_money)),
+                  keyboardType: TextInputType.number,
+                  onChanged: (_) => setState(() {}), // keeps the recipe's margin hint current
+                ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<int>(
                   initialValue: _categoryId,
@@ -141,6 +156,12 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                     helperText: 'Which station in the kitchen cooks this dish',
                     prefixIcon: Icon(Icons.soup_kitchen_outlined),
                   ),
+                ),
+                const SizedBox(height: 28),
+                RecipeEditor(
+                  key: _recipeKey,
+                  price: double.tryParse(_priceCtrl.text.trim()) ?? 0,
+                  enabled: !_submitting,
                 ),
                 const SizedBox(height: 32),
                 Row(

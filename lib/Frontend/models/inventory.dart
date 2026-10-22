@@ -93,16 +93,18 @@ class InventoryItem {
 
 /// One line of an item's stock history.
 class InventoryTransaction {
-  final String type; // 'delivery' | 'usage' | 'adjustment'
+  final String type; // 'delivery' | 'usage' | 'adjustment' | 'return'
   final double quantity; // signed: positive added stock, negative removed it
   final String employeeName;
   final String time; // restaurant-local, 'YYYY-MM-DD HH:MM:SS'
+  final int? orderId; // set when an order caused this change
 
   InventoryTransaction({
     required this.type,
     required this.quantity,
     required this.employeeName,
     required this.time,
+    this.orderId,
   });
 
   factory InventoryTransaction.fromJson(Map<String, dynamic> json) {
@@ -111,6 +113,7 @@ class InventoryTransaction {
       quantity: double.tryParse('${json['quantity']}') ?? 0,
       employeeName: (json['employee_name'] ?? '').toString(),
       time: (json['local_time'] ?? json['transaction_date'] ?? '').toString(),
+      orderId: int.tryParse('${json['order_id'] ?? ''}'),
     );
   }
 }
@@ -118,16 +121,18 @@ class InventoryTransaction {
 /// One line of the "Recent Activity" feed: a stock change on some item,
 /// across the whole inventory (not scoped to one item like [InventoryTransaction]).
 class InventoryActivity {
-  final String type; // 'delivery' | 'usage' | 'adjustment'
+  final String type; // 'delivery' | 'usage' | 'adjustment' | 'return'
   final double quantity;
   final String ingredientName;
   final String time;
+  final int? orderId;
 
   InventoryActivity({
     required this.type,
     required this.quantity,
     required this.ingredientName,
     required this.time,
+    this.orderId,
   });
 
   factory InventoryActivity.fromJson(Map<String, dynamic> json) {
@@ -136,6 +141,7 @@ class InventoryActivity {
       quantity: double.tryParse('${json['quantity']}') ?? 0,
       ingredientName: (json['ingredient_name'] ?? '').toString(),
       time: (json['local_time'] ?? '').toString(),
+      orderId: int.tryParse('${json['order_id'] ?? ''}'),
     );
   }
 }

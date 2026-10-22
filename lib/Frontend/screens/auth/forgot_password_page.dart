@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:rms/Frontend/services/api_services.dart';
 import 'package:rms/Frontend/services/auth_services.dart';
 
@@ -8,6 +9,7 @@ import '../../core/routes/app_router.dart';
 
 enum _Step { email, code, newPassword, done }
 
+const _codeLength = 6; // matches the backend's 6-digit code — see authController.js
 final _emailRe = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
 
 /// The forgot-password flow: enter your email -> get a 6-digit code -> set a
@@ -28,7 +30,6 @@ class ForgotPasswordPage extends StatefulWidget {
 class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   final _auth = AuthService();
   final _emailController = TextEditingController();
-  final _codeController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmController = TextEditingController();
 
@@ -37,17 +38,23 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   String? _error;
   String _email = '';
   String _maskedEmail = '';
+  String _code = '';
   String _resetToken = '';
   String _confirmationNumber = '';
   int _resendCooldown = 0;
   Timer? _cooldownTimer;
   Timer? _autoContinueTimer;
   int _autoContinueSeconds = 0;
+  bool _obscurePassword = true;
+  bool _obscureConfirm = true;
+
+  /// Bumped every time the code boxes should clear themselves (a fresh
+  /// code was sent, or a wrong one was just rejected).
+  int _codeBoxesGeneration = 0;
 
   @override
   void dispose() {
     _emailController.dispose();
-    _codeController.dispose();
     _passwordController.dispose();
     _confirmController.dispose();
     _cooldownTimer?.cancel();
@@ -110,6 +117,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         _email = email;
         _maskedEmail = masked;
         _step = _Step.code;
+        _code = '';
+        _codeBoxesGeneration++;
       });
       _startCooldown(60);
     } on ApiException catch (e) {
@@ -124,9 +133,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Future<void> _verifyCode() async {
-    final code = _codeController.text.trim();
-    if (code.length != 6 || int.tryParse(code) == null) {
-      setState(() => _error = 'Enter the 6-digit code from your email.');
+    if (_code.length != _codeLength) {
+      setState(() => _error = 'Enter all $_codeLength digits from your email.');
       return;
     }
     setState(() {
@@ -134,14 +142,18 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       _error = null;
     });
     try {
-      final token = await _auth.verifyPasswordResetCode(_email, code);
+      final token = await _auth.verifyPasswordResetCode(_email, _code);
       if (!mounted) return;
       setState(() {
         _resetToken = token;
         _step = _Step.newPassword;
       });
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      setState(() {
+        _error = e.message;
+        _code = '';
+        _codeBoxesGeneration++; // clear the boxes so a wrong code isn't just re-submitted by accident
+      });
     } catch (e) {
       setState(() => _error = 'Could not verify the code: $e');
     } finally {
@@ -181,10 +193,22 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     }
   }
 
+  String _appBarTitle() {
+    switch (_step) {
+      case _Step.email:
+      case _Step.code:
+        return 'Forgot your password';
+      case _Step.newPassword:
+        return 'Create a new password';
+      case _Step.done:
+        return '';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: _step == _Step.done ? null : AppBar(title: const Text('Forgot Password')),
+      appBar: _step == _Step.done ? null : AppBar(title: Text(_appBarTitle())),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -206,7 +230,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     if (_error == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 12),
-      child: Text(_error!, style: const TextStyle(color: Colors.red)),
+      child: Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
     );
   }
 
@@ -244,37 +268,45 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   }
 
   Widget _codeStep() {
+    final canResend = !_busy && _resendCooldown <= 0;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.mark_email_read_outlined, size: 48),
-        const SizedBox(height: 16),
-        Text('Enter the 6-digit code sent to $_maskedEmail.', textAlign: TextAlign.center),
-        const SizedBox(height: 20),
-        TextField(
-          controller: _codeController,
-          keyboardType: TextInputType.number,
-          textAlign: TextAlign.center,
-          autofocus: true,
-          maxLength: 6,
-          style: const TextStyle(fontSize: 24, letterSpacing: 8),
-          decoration: const InputDecoration(counterText: '', hintText: '••••••'),
-          onSubmitted: (_) => _verifyCode(),
+        const Text('Forgot your password', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        Text('Enter the verification code sent to your email\n$_maskedEmail', style: const TextStyle(color: Colors.grey)),
+        const SizedBox(height: 24),
+        Center(
+          child: _OtpBoxes(
+            key: ValueKey(_codeBoxesGeneration),
+            length: _codeLength,
+            enabled: !_busy,
+            onChanged: (value) => setState(() => _code = value),
+            onCompleted: (value) {
+              setState(() => _code = value);
+              _verifyCode();
+            },
+          ),
+        ),
+        const SizedBox(height: 14),
+        Center(
+          child: canResend
+              ? TextButton(onPressed: _sendCode, child: const Text('Resend code'))
+              : Text(
+                  "Didn't receive the code? 00:${_resendCooldown.toString().padLeft(2, '0')}",
+                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+                ),
         ),
         _errorText(),
-        const SizedBox(height: 16),
+        const SizedBox(height: 10),
         ElevatedButton(
-          onPressed: _busy ? null : _verifyCode,
+          onPressed: (_busy || _code.length != _codeLength) ? null : _verifyCode,
           child: _busy
               ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Verify code'),
+              : const Text('Continue'),
         ),
         const SizedBox(height: 8),
-        TextButton(
-          onPressed: (_busy || _resendCooldown > 0) ? null : _sendCode,
-          child: Text(_resendCooldown > 0 ? 'Resend code in ${_resendCooldown}s' : 'Resend code'),
-        ),
         TextButton(
           onPressed: _busy
               ? null
@@ -293,21 +325,35 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.password, size: 48),
-        const SizedBox(height: 16),
-        const Text('Choose a new password.', textAlign: TextAlign.center),
-        const SizedBox(height: 20),
+        const Text('Create a new password', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 6),
+        const Text('Enter a new password and try not to forget it.', style: TextStyle(color: Colors.grey)),
+        const SizedBox(height: 24),
         TextField(
           controller: _passwordController,
-          obscureText: true,
+          obscureText: _obscurePassword,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'New password', prefixIcon: Icon(Icons.lock_outline)),
+          decoration: InputDecoration(
+            labelText: 'New password',
+            prefixIcon: const Icon(Icons.lock_outline),
+            suffixIcon: IconButton(
+              icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+              onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+            ),
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
           controller: _confirmController,
-          obscureText: true,
-          decoration: const InputDecoration(labelText: 'Confirm new password', prefixIcon: Icon(Icons.lock_outline)),
+          obscureText: _obscureConfirm,
+          decoration: InputDecoration(
+            labelText: 'Re-enter the new password',
+            prefixIcon: const Icon(Icons.lock_outline),
+            suffixIcon: IconButton(
+              icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility),
+              onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
+            ),
+          ),
           onSubmitted: (_) => _setNewPassword(),
         ),
         _errorText(),
@@ -316,7 +362,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           onPressed: _busy ? null : _setNewPassword,
           child: _busy
               ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Reset password'),
+              : const Text('Continue'),
         ),
       ],
     );
@@ -349,6 +395,108 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           onPressed: _goToDashboard,
           child: Text(_autoContinueSeconds > 0 ? 'Continue to dashboard (${_autoContinueSeconds}s)' : 'Continue to dashboard'),
         ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Segmented digit-code input: one box per digit, auto-advancing, matching
+// the "enter the code" design.
+// ---------------------------------------------------------------------------
+
+class _OtpBoxes extends StatefulWidget {
+  final int length;
+  final bool enabled;
+  final ValueChanged<String> onChanged;
+  final ValueChanged<String> onCompleted;
+  const _OtpBoxes({super.key, required this.length, required this.enabled, required this.onChanged, required this.onCompleted});
+
+  @override
+  State<_OtpBoxes> createState() => _OtpBoxesState();
+}
+
+class _OtpBoxesState extends State<_OtpBoxes> {
+  late final List<TextEditingController> _controllers = List.generate(widget.length, (_) => TextEditingController());
+  late final List<FocusNode> _focusNodes = List.generate(widget.length, (_) => FocusNode());
+
+  @override
+  void dispose() {
+    for (final c in _controllers) {
+      c.dispose();
+    }
+    for (final f in _focusNodes) {
+      f.dispose();
+    }
+    super.dispose();
+  }
+
+  String get _value => _controllers.map((c) => c.text).join();
+
+  void _onChanged(int index, String value) {
+    // Paste or autofill may drop more than one character into a single box.
+    if (value.length > 1) {
+      final digits = value.replaceAll(RegExp(r'\D'), '');
+      for (var i = 0; i < widget.length; i++) {
+        _controllers[i].text = i < digits.length ? digits[i] : '';
+      }
+      final lastFilled = (digits.length - 1).clamp(0, widget.length - 1);
+      _focusNodes[lastFilled].requestFocus();
+    } else if (value.isNotEmpty && index < widget.length - 1) {
+      _focusNodes[index + 1].requestFocus();
+    }
+
+    widget.onChanged(_value);
+    if (_value.length == widget.length) {
+      widget.onCompleted(_value);
+    }
+  }
+
+  void _onBackspace(int index) {
+    if (_controllers[index].text.isEmpty && index > 0) {
+      _focusNodes[index - 1].requestFocus();
+      _controllers[index - 1].clear();
+      widget.onChanged(_value);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (var i = 0; i < widget.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          SizedBox(
+            width: 44,
+            height: 54,
+            child: KeyboardListener(
+              // Shares the TextField's own focus node below, rather than
+              // creating a new one here: a fresh FocusNode on every rebuild
+              // would leak (never disposed) and would never actually be
+              // focused, since the TextField focuses `_focusNodes[i]` instead
+              // — so it wouldn't see the key presses it's meant to catch.
+              focusNode: _focusNodes[i],
+              onKeyEvent: (event) {
+                if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.backspace) {
+                  _onBackspace(i);
+                }
+              },
+              child: TextField(
+                controller: _controllers[i],
+                focusNode: _focusNodes[i],
+                enabled: widget.enabled,
+                textAlign: TextAlign.center,
+                keyboardType: TextInputType.number,
+                maxLength: 1,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                decoration: const InputDecoration(counterText: '', contentPadding: EdgeInsets.zero),
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                onChanged: (v) => _onChanged(i, v),
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
