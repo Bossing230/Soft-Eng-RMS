@@ -6,6 +6,7 @@ import 'package:rms/Frontend/services/auth_services.dart';
 import '../../core/routes/app_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../repositories/notification_repository.dart';
+import 'activity_log_page.dart';
 
 class RoleNavItem {
   final String label;
@@ -62,6 +63,12 @@ class _RoleScaffoldState extends State<RoleScaffold> {
   List<NotificationItem> _notifications = [];
   Timer? _pollTimer;
 
+  /// A page opened from the account menu (the Activity Log). While it is set it
+  /// is shown in the main area instead of the selected tab; picking any tab in
+  /// the sidebar or bottom bar closes it.
+  Widget? _overlayPage;
+  String? _overlayTitle;
+
   @override
   void initState() {
     super.initState();
@@ -88,8 +95,25 @@ class _RoleScaffoldState extends State<RoleScaffold> {
   /// summary tab uses "<Role> Dashboard"), otherwise its sidebar label —
   /// matching how every page design in this app labels its own top bar.
   String get _topTitle {
+    if (_overlayTitle != null) return _overlayTitle!;
     final item = widget.items[_selected];
     return item.pageTitle ?? item.label;
+  }
+
+  /// Opens one of the sidebar / bottom-bar tabs and closes any account-menu page.
+  void _selectTab(int index) {
+    setState(() {
+      _selected = index;
+      _overlayPage = null;
+      _overlayTitle = null;
+    });
+  }
+
+  void _openActivityLog() {
+    setState(() {
+      _overlayPage = const ActivityLogPage();
+      _overlayTitle = 'Activity Log';
+    });
   }
 
   String get _initials {
@@ -266,7 +290,8 @@ class _RoleScaffoldState extends State<RoleScaffold> {
             itemCount: widget.items.length,
             itemBuilder: (_, i) {
               final item = widget.items[i];
-              final selected = i == _selected;
+              // No tab is highlighted while an account-menu page (Activity Log) is open.
+              final selected = i == _selected && _overlayPage == null;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
                 child: ListTile(
@@ -276,7 +301,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
                   selectedTileColor: primary.withOpacity(0.08),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   onTap: () {
-                    setState(() => _selected = i);
+                    _selectTab(i);
                     if (isDrawer) Navigator.of(context).maybePop();
                   },
                 ),
@@ -364,7 +389,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
             _showChangePasswordDialog();
             break;
           case 'activity':
-            _showNotBuiltYet('Activity Log');
+            _openActivityLog();
             break;
           case 'settings':
             _showNotBuiltYet('Account Settings');
@@ -460,9 +485,9 @@ class _RoleScaffoldState extends State<RoleScaffold> {
     final body = _RoleScaffoldScope(
       goToLabel: (label) {
         final index = widget.items.indexWhere((i) => i.label == label);
-        if (index != -1) setState(() => _selected = index);
+        if (index != -1) _selectTab(index);
       },
-      child: widget.items[_selected].page,
+      child: _overlayPage ?? widget.items[_selected].page,
     );
 
     if (isWide) {
@@ -499,7 +524,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selected,
         type: BottomNavigationBarType.fixed,
-        onTap: (i) => setState(() => _selected = i),
+        onTap: _selectTab,
         items: widget.items.map((item) => BottomNavigationBarItem(icon: Icon(item.icon), label: item.label)).toList(),
       ),
     );
