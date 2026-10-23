@@ -123,8 +123,22 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       _startCooldown(60);
     } on ApiException catch (e) {
       final retry = e.body?['retryAfterSeconds'];
-      setState(() => _error = e.message);
-      if (retry is int) _startCooldown(retry);
+      final maskedFromCooldown = e.body?['maskedEmail'] as String?;
+      if (retry is int && maskedFromCooldown != null) {
+        // A code from an earlier request is still valid — move on to
+        // entering it instead of leaving the person stuck here with no way
+        // forward. Resend just respects the remaining cooldown.
+        setState(() {
+          _email = email;
+          _maskedEmail = maskedFromCooldown;
+          _step = _Step.code;
+          _code = '';
+          _codeBoxesGeneration++;
+        });
+        _startCooldown(retry);
+      } else {
+        setState(() => _error = e.message);
+      }
     } catch (e) {
       setState(() => _error = 'Could not send the code: $e');
     } finally {
