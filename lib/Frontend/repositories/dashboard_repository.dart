@@ -8,6 +8,15 @@ class DashboardRepository {
     return Map<String, dynamic>.from(data);
   }
 
+  /// Everything the Administrator overview shows, for Daily, Weekly and
+  /// Monthly at once (so switching between them needs no new request):
+  /// revenue and chart buckets and top sellers per period, open orders, low
+  /// stock, available tables, recent orders and today's staff activity.
+  Future<Map<String, dynamic>> getAdminOverview() async {
+    final data = await _api.get('/reports/admin-overview');
+    return Map<String, dynamic>.from(data);
+  }
+
   /// Everything the manager dashboard shows, in one request: today's numbers,
   /// staff counts, the 7-day trend, top sellers, staff activity and alerts.
   Future<Map<String, dynamic>> getManagerOverview() async {

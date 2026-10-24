@@ -55,7 +55,7 @@ class _ManagerOverviewPageState extends State<ManagerOverviewPage> {
   void initState() {
     super.initState();
     _refresh();
-    _refreshTimer = Timer.periodic(const Duration(seconds: 60), (_) => _refresh());
+    _refreshTimer = Timer.periodic(const Duration(seconds: 30), (_) => _refresh());
   }
 
   @override
@@ -670,10 +670,7 @@ class _StaffActivityCard extends StatelessWidget {
           const _PanelTitle('Staff activity'),
           if (!attendanceReady) ...[
             const SizedBox(height: 6),
-            const Text(
-              'Attendance is not set up on the server yet, so everyone shows as off duty.',
-              style: TextStyle(fontSize: 12, color: _Ui.muted),
-            ),
+            const Text('No active cashier, kitchen or manager accounts yet.', style: TextStyle(color: _Ui.muted))
           ],
           const SizedBox(height: 16),
           if (staff.isEmpty)
@@ -702,7 +699,7 @@ class _StaffRow extends StatelessWidget {
     final dotColor = presence == 'on_duty' ? _Ui.green : (presence == 'on_break' ? _Ui.amber : const Color(0xFFBDBDBD));
     final statusNote = presence == 'on_break' ? ' · On break' : (presence == 'off' ? ' · Off duty' : '');
     // Kitchen staff don't take orders, so they have no sales figures.
-    final showSales = roleName != 'kitchen';
+    final showSales = roleName == 'cashier';
 
     return Row(
       children: [
