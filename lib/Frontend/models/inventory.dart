@@ -24,6 +24,10 @@ class InventoryItem {
   /// (local to the restaurant's time zone already).
   final String? lastUpdated;
 
+  /// Link to the item's photo (a full https link, or a path on our server).
+  /// Null if the item has no photo.
+  final String? image;
+
   InventoryItem({
     required this.inventoryId,
     required this.ingredientName,
@@ -37,9 +41,11 @@ class InventoryItem {
     this.expiryDate,
     this.unitCost = 0,
     this.lastUpdated,
+    this.image,
   });
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
+    final rawImage = json['image']?.toString();
     return InventoryItem(
       inventoryId: int.parse(json['inventory_id'].toString()),
       ingredientName: json['ingredient_name'] ?? '',
@@ -53,12 +59,15 @@ class InventoryItem {
       expiryDate: json['expiry_date'],
       unitCost: double.tryParse('${json['unit_cost'] ?? 0}') ?? 0,
       lastUpdated: json['updated_at']?.toString(),
+      image: (rawImage == null || rawImage.isEmpty) ? null : rawImage,
     );
   }
 
   bool get isLow => status == 'low';
   bool get isOut => status == 'out';
   bool get isCritical => severity == 'critical';
+
+  bool get hasImage => image != null && image!.isNotEmpty;
 
   /// Low, critical, or out of stock.
   bool get needsRestock => status != 'ok';

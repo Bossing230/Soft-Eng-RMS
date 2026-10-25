@@ -5,6 +5,7 @@ import 'package:rms/Frontend/models/account_profile.dart';
 import 'package:rms/Frontend/patterns/singleton/session_manager.dart';
 import 'package:rms/Frontend/services/auth_services.dart';
 import '../../core/constants/app_constants.dart';
+import '../../core/routes/app_router.dart';
 import '../../repositories/account_repository.dart';
 
 // ---------------------------------------------------------------------------
@@ -16,9 +17,10 @@ class _Ui {
   static const ink = Color(0xFF2B2B2B);
   static const muted = Color(0xFF7A7A7A);
   static const red = Color(0xFFE53935);
+  static const green = Color(0xFF2E7D32);
 }
 
-enum _Section { profile, password, settings }
+enum _Section { profile, password, settings, delete }
 
 _Section _sectionFrom(String name) {
   for (final s in _Section.values) {
@@ -94,6 +96,13 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   String? _passwordError;
   bool _changingPassword = false;
 
+  // delete account
+  final _deletePassword = TextEditingController();
+  final _deleteConfirm = TextEditingController();
+  bool _showDeletePassword = false;
+  bool _deleting = false;
+  String? _deleteError;
+
   // settings
   Map<String, dynamic>? _rates;
   bool _ratesLoading = false;
@@ -126,6 +135,8 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     _currentPassword.dispose();
     _newPassword.dispose();
     _confirmPassword.dispose();
+    _deletePassword.dispose();
+    _deleteConfirm.dispose();
     super.dispose();
   }
 
@@ -444,6 +455,8 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
           selected: false, onTap: widget.onOpenActivityLog),
       _menuItem(Icons.settings_outlined, 'Account Settings', 'Manage your preferences and system settings',
           selected: _section == _Section.settings, onTap: () => _select(_Section.settings)),
+      _menuItem(Icons.delete_outline, 'Delete Account', 'Permanently close your account',
+          selected: _section == _Section.delete, danger: true, onTap: () => _select(_Section.delete)),
     ];
     return _card(
       padding: const EdgeInsets.all(12),
@@ -458,10 +471,11 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     );
   }
 
-  Widget _menuItem(IconData icon, String title, String subtitle, {required bool selected, required VoidCallback? onTap}) {
-    final primary = Theme.of(context).colorScheme.primary;
+  Widget _menuItem(IconData icon, String title, String subtitle,
+      {required bool selected, required VoidCallback? onTap, bool danger = false}) {
+    final accent = danger ? _Ui.red : Theme.of(context).colorScheme.primary;
     return Material(
-      color: selected ? primary.withOpacity(0.10) : Colors.transparent,
+      color: selected ? accent.withOpacity(0.10) : Colors.transparent,
       borderRadius: BorderRadius.circular(12),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
@@ -473,15 +487,16 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
               Container(
                 width: 36,
                 height: 36,
-                decoration: BoxDecoration(color: primary.withOpacity(selected ? 0.18 : 0.08), borderRadius: BorderRadius.circular(10)),
-                child: Icon(icon, size: 19, color: primary),
+                decoration: BoxDecoration(color: accent.withOpacity(selected ? 0.18 : 0.08), borderRadius: BorderRadius.circular(10)),
+                child: Icon(icon, size: 19, color: accent),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(title, style: TextStyle(fontSize: 14, fontWeight: selected ? FontWeight.w600 : FontWeight.w500, color: _Ui.ink)),
+                    Text(title,
+                        style: TextStyle(fontSize: 14, fontWeight: selected ? FontWeight.w600 : FontWeight.w500, color: danger ? _Ui.red : _Ui.ink)),
                     Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: _Ui.muted)),
                   ],
                 ),
@@ -504,6 +519,8 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
         return _passwordCard();
       case _Section.settings:
         return _settingsCard();
+      case _Section.delete:
+        return _deleteCard();
     }
   }
 
@@ -812,6 +829,161 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
         children: [
           Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: _Ui.ink))),
           Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.ink)),
+        ],
+      ),
+    );
+  }
+
+  // ---- delete account ----
+
+  Future<void> _deleteAccount() async {
+    final password = _deletePassword.text;
+    if (password.isEmpty) {
+      setState(() => _deleteError = 'Enter your password');
+      return;
+    }
+    if (_deleteConfirm.text.trim() != 'DELETE') {
+      setState(() => _deleteError = 'Type DELETE in capital letters to confirm');
+      return;
+    }
+
+    final sure = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete your account?'),
+        content: const Text('This is permanent. You will be signed out on every device and can never sign in with this account again.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Keep my account')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: _Ui.red, foregroundColor: Colors.white),
+            child: const Text('Delete forever'),
+          ),
+        ],
+      ),
+    );
+    if (sure != true || !mounted) return;
+
+    setState(() {
+      _deleting = true;
+      _deleteError = null;
+    });
+    try {
+      await _repo.deleteAccount(password: password);
+      await SessionManager().clear();
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Account deleted'),
+          content: const Text('Your account has been deleted and you have been signed out.'),
+          actions: [ElevatedButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+        ),
+      );
+      if (mounted) AppRouter.goToLogin(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _deleting = false;
+          _deleteError = '$e';
+        });
+      }
+    }
+  }
+
+  Widget _deleteCard() {
+    final isAdmin = _profile?.role == AppConstants.roleAdmin;
+    Widget bullet(String text) => Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(padding: EdgeInsets.only(top: 6), child: Icon(Icons.circle, size: 5, color: _Ui.red)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(text, style: const TextStyle(fontSize: 12.5, color: _Ui.ink, height: 1.35))),
+            ],
+          ),
+        );
+
+    final canDelete = _deletePassword.text.isNotEmpty && _deleteConfirm.text.trim() == 'DELETE';
+
+    return _card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _cardHeader(Icons.delete_outline, 'Delete Account', 'Permanently close your account.'),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(color: _Ui.red.withOpacity(0.07), borderRadius: BorderRadius.circular(12), border: Border.all(color: _Ui.red.withOpacity(0.25))),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('This cannot be undone.', style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700, color: _Ui.red)),
+                bullet('You are signed out on every device and can never sign in with this account again.'),
+                bullet('Your name, email, phone, address and photo are removed.'),
+                bullet('Past orders, payments and activity stay for the restaurant\'s records, shown as "Deleted account".'),
+                if (isAdmin) bullet('If you are the only administrator, make another account an administrator first.'),
+              ],
+            ),
+          ),
+          const SizedBox(height: 18),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _labeled(
+                  'Your password',
+                  TextField(
+                    controller: _deletePassword,
+                    obscureText: !_showDeletePassword,
+                    enabled: !_deleting,
+                    onChanged: (_) => setState(() => _deleteError = null),
+                    decoration: _decoration(
+                      suffix: IconButton(
+                        icon: Icon(_showDeletePassword ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18, color: _Ui.muted),
+                        onPressed: () => setState(() => _showDeletePassword = !_showDeletePassword),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                _labeled(
+                  'Type DELETE to confirm',
+                  TextField(
+                    controller: _deleteConfirm,
+                    enabled: !_deleting,
+                    textCapitalization: TextCapitalization.characters,
+                    onChanged: (_) => setState(() => _deleteError = null),
+                    decoration: _decoration(),
+                  ),
+                ),
+                if (_deleteError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(_deleteError!, style: const TextStyle(fontSize: 13, color: _Ui.red)),
+                ],
+                const SizedBox(height: 18),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: ElevatedButton.icon(
+                    onPressed: _deleting || !canDelete ? null : _deleteAccount,
+                    icon: _deleting
+                        ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Icon(Icons.delete_forever_outlined, size: 18),
+                    label: const Text('Delete my account'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: _Ui.red,
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: _Ui.red.withOpacity(0.35),
+                      disabledForegroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

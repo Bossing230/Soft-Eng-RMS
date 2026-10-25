@@ -304,6 +304,9 @@ class _RoleScaffoldState extends State<RoleScaffold> {
           case 'settings':
             _openAccountSettings('profile');
             break;
+          case 'delete':
+            _openAccountSettings('delete');
+            break;
           case 'logout':
             _confirmLogout();
             break;
@@ -349,6 +352,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
         const PopupMenuItem(value: 'password', child: Row(children: [Icon(Icons.lock_outline, size: 18), SizedBox(width: 12), Text('Change Password')])),
         const PopupMenuItem(value: 'activity', child: Row(children: [Icon(Icons.history, size: 18), SizedBox(width: 12), Text('Activity Log')])),
         const PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings_outlined, size: 18), SizedBox(width: 12), Text('Account Settings')])),
+        const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_outline, size: 18, color: Colors.red), SizedBox(width: 12), Text('Delete Account', style: TextStyle(color: Colors.red))])),
         const PopupMenuDivider(),
         const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, size: 18, color: Colors.red), SizedBox(width: 12), Text('Logout', style: TextStyle(color: Colors.red))])),
       ],

@@ -29,6 +29,12 @@ class AccountRepository {
     return data['profile_image'] as String;
   }
 
+  /// Permanently closes the signed-in person's own account. The server checks
+  /// [password], so a wrong one throws an [ApiException] with a readable message.
+  Future<void> deleteAccount({required String password}) async {
+    await _api.post('/account/delete', body: {'password': password, 'confirm': 'DELETE'});
+  }
+
   /// The tax and service-charge rates applied to every order (e.g. 0.12 = 12%).
   Future<Map<String, dynamic>> getOrderRates() async {
     final data = await _api.get('/config/order-rates');

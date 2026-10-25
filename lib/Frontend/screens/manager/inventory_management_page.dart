@@ -1,8 +1,12 @@
+import 'dart:typed_data';
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:rms/Frontend/models/inventory.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../repositories/inventory_repository.dart';
 
 // ---------------------------------------------------------------------------
@@ -127,6 +131,56 @@ InputDecoration _fieldDecoration({String? hint, String? label, IconData? icon, S
 const _itemsPerPage = 8;
 
 // ---------------------------------------------------------------------------
+// Item photos
+// ---------------------------------------------------------------------------
+
+/// Turns what the server stored into a link the app can load. Photos kept on
+/// Cloudinary are already full links; older ones are a path on our own server.
+String? _fullImageUrl(String? path) {
+  if (path == null || path.isEmpty) return null;
+  if (path.startsWith('http')) return path;
+  final base = AppConstants.apiBaseUrl.replaceAll('/api', '');
+  return '$base$path';
+}
+
+/// Lets the person choose a photo from their device. Returns null if they
+/// cancel.
+Future<(XFile, Uint8List)?> _pickPhoto() async {
+  final file = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 1000);
+  if (file == null) return null;
+  return (file, await file.readAsBytes());
+}
+
+/// The item's photo in a rounded square, or its category icon if it has none
+/// (or the photo can't be loaded).
+class _ItemThumb extends StatelessWidget {
+  final InventoryItem item;
+  final double size;
+  const _ItemThumb({required this.item, this.size = 46});
+
+  @override
+  Widget build(BuildContext context) {
+    final url = _fullImageUrl(item.image);
+    final fallback = Center(child: Icon(_categoryIcon(item.category), size: size * 0.5, color: _Ui.tanDeep));
+    return Container(
+      width: size,
+      height: size,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(color: _Ui.tanTint, borderRadius: BorderRadius.circular(10)),
+      child: url == null
+          ? fallback
+          : Image.network(
+              url,
+              fit: BoxFit.cover,
+              width: size,
+              height: size,
+              errorBuilder: (_, __, ___) => fallback,
+            ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -230,14 +284,39 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
 
   // ---- actions ----
 
+  // The add / edit form is a full page (not a dialog) because it has a photo
+  // picker: the native file picker can crash a modal dialog on Flutter Web
+  // (the same reason the menu's "Add Item" is a page).
   Future<void> _openAddItem() async {
-    final created = await showDialog<InventoryItem>(
-      context: context,
-      builder: (_) => _ItemFormDialog(repo: _repo),
+    final created = await Navigator.of(context).push<InventoryItem>(
+      MaterialPageRoute(builder: (_) => _ItemFormPage(repo: _repo)),
     );
     if (created == null) return;
     _load(showSpinner: false);
     _snack('Added ${created.ingredientName}');
+  }
+
+  Future<void> _editItem(InventoryItem item) async {
+    final saved = await Navigator.of(context).push<InventoryItem>(
+      MaterialPageRoute(builder: (_) => _ItemFormPage(repo: _repo, existing: item)),
+    );
+    if (saved == null) return;
+    _load(showSpinner: false);
+    _snack('Saved ${saved.ingredientName}');
+  }
+
+  /// Quick photo change from the row's ⋮ menu.
+  Future<void> _changePhoto(InventoryItem item) async {
+    try {
+      final picked = await _pickPhoto();
+      if (picked == null) return;
+      final url = await _repo.uploadImage(bytes: picked.$2, filename: picked.$1.name);
+      await _repo.setImage(item.inventoryId, url);
+      _load(showSpinner: false);
+      _snack('Photo updated for ${item.ingredientName}');
+    } catch (e) {
+      _snack('Could not update the photo: $e');
+    }
   }
 
   Future<void> _openDetail(InventoryItem item) {
@@ -265,12 +344,35 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
     }
   }
 
+  /// What the "Current view" option of the report means right now, or null
+  /// when no category or search is active (then it would just be "All items").
+  String? get _viewLabel {
+    final parts = <String>[
+      if (_categoryFilter != 'All') _categoryFilter,
+      if (_query.trim().isNotEmpty) 'search "${_query.trim()}"',
+    ];
+    return parts.isEmpty ? null : parts.join(' · ');
+  }
+
   Future<void> _downloadReport() async {
     if (_downloadingReport) return;
+
+    final choice = await showDialog<_ReportChoice>(
+      context: context,
+      builder: (_) => _ReportDialog(viewLabel: _viewLabel, viewCount: _filtered.length, totalCount: _items.length),
+    );
+    if (choice == null) return;
+
+    final useView = choice.scope == 'view';
     setState(() => _downloadingReport = true);
     try {
-      final started = await _repo.downloadReportPdf();
-      _snack(started ? 'Downloading the inventory report…' : "Downloading isn't supported on this device yet.");
+      final started = await _repo.downloadReport(
+        format: choice.format,
+        filter: choice.scope == 'low' || choice.scope == 'expiring' ? choice.scope : 'all',
+        category: useView && _categoryFilter != 'All' ? _categoryFilter : null,
+        search: useView && _query.trim().isNotEmpty ? _query.trim() : null,
+      );
+      _snack(started ? 'Downloading the ${choice.formatLabel} report…' : "Downloading isn't supported on this device yet.");
     } catch (e) {
       _snack('Could not download the report: $e');
     } finally {
@@ -375,6 +477,8 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
               _ItemRow(
                 item: item,
                 onTap: () => _openDetail(item),
+                onEdit: () => _editItem(item),
+                onChangePhoto: () => _changePhoto(item),
                 onAddDelivery: item.needsRestock ? () => _quickDelivery(item) : null,
               ),
             const SizedBox(height: 10),
@@ -481,6 +585,166 @@ class _PageHeader extends StatelessWidget {
         }
         return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [titleBlock, const SizedBox(height: 14), buttons]);
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Download report: pick a format and what to include
+// ---------------------------------------------------------------------------
+
+class _ReportChoice {
+  final String format; // 'pdf' | 'excel' | 'csv'
+  final String scope; // 'view' | 'all' | 'low' | 'expiring'
+  const _ReportChoice(this.format, this.scope);
+
+  String get formatLabel => format == 'excel' ? 'Excel' : format.toUpperCase();
+}
+
+class _ReportDialog extends StatefulWidget {
+  final String? viewLabel; // null when no category or search is active
+  final int viewCount;
+  final int totalCount;
+  const _ReportDialog({required this.viewLabel, required this.viewCount, required this.totalCount});
+
+  @override
+  State<_ReportDialog> createState() => _ReportDialogState();
+}
+
+class _ReportDialogState extends State<_ReportDialog> {
+  String _format = 'pdf';
+  late String _scope = widget.viewLabel != null ? 'view' : 'all';
+
+  @override
+  Widget build(BuildContext context) {
+    const heading = TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _Ui.muted);
+
+    return AlertDialog(
+      backgroundColor: _Ui.dialogBg,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text('Download report', style: TextStyle(fontSize: 18)),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('FORMAT', style: heading),
+              const SizedBox(height: 8),
+              _OptionTile(
+                icon: Icons.picture_as_pdf_outlined,
+                title: 'PDF',
+                subtitle: 'Easy to print or share',
+                selected: _format == 'pdf',
+                onTap: () => setState(() => _format = 'pdf'),
+              ),
+              _OptionTile(
+                icon: Icons.table_chart_outlined,
+                title: 'Excel (.xlsx)',
+                subtitle: 'Formatted, with filters you can sort',
+                selected: _format == 'excel',
+                onTap: () => setState(() => _format = 'excel'),
+              ),
+              _OptionTile(
+                icon: Icons.description_outlined,
+                title: 'CSV',
+                subtitle: 'Plain data for other programs',
+                selected: _format == 'csv',
+                onTap: () => setState(() => _format = 'csv'),
+              ),
+              const SizedBox(height: 14),
+              const Text('WHAT TO INCLUDE', style: heading),
+              const SizedBox(height: 8),
+              if (widget.viewLabel != null)
+                _OptionTile(
+                  icon: Icons.filter_list,
+                  title: 'Current view',
+                  subtitle: '${widget.viewLabel} · ${widget.viewCount} items',
+                  selected: _scope == 'view',
+                  onTap: () => setState(() => _scope = 'view'),
+                ),
+              _OptionTile(
+                icon: Icons.inventory_2_outlined,
+                title: 'All items',
+                subtitle: '${widget.totalCount} items in the inventory',
+                selected: _scope == 'all',
+                onTap: () => setState(() => _scope = 'all'),
+              ),
+              _OptionTile(
+                icon: Icons.warning_amber_rounded,
+                title: 'Low stock only',
+                subtitle: 'Low, critical and out of stock',
+                selected: _scope == 'low',
+                onTap: () => setState(() => _scope = 'low'),
+              ),
+              _OptionTile(
+                icon: Icons.schedule,
+                title: 'Expiring soon only',
+                subtitle: 'Expires within 7 days or already expired',
+                selected: _scope == 'expiring',
+                onTap: () => setState(() => _scope = 'expiring'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(backgroundColor: _Ui.tanDeep, foregroundColor: Colors.white),
+          onPressed: () => Navigator.of(context).pop(_ReportChoice(_format, _scope)),
+          icon: const Icon(Icons.download_outlined, size: 18),
+          label: const Text('Download'),
+        ),
+      ],
+    );
+  }
+}
+
+class _OptionTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final bool selected;
+  final VoidCallback onTap;
+  const _OptionTile({required this.icon, required this.title, required this.subtitle, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: selected ? _Ui.tanTint : _Ui.fieldFill,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: selected ? _Ui.tanDeep : _Ui.border),
+            ),
+            child: Row(
+              children: [
+                Icon(icon, size: 22, color: selected ? _Ui.tanDeep : _Ui.muted),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.ink)),
+                      Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: _Ui.muted)),
+                    ],
+                  ),
+                ),
+                if (selected) const Icon(Icons.check_circle, size: 20, color: _Ui.tanDeep),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -647,7 +911,7 @@ class _ItemsTableHeader extends StatelessWidget {
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
           child: Row(
             children: const [
-              SizedBox(width: 40 + 10), // thumbnail + gap
+              SizedBox(width: 46 + 10), // photo + gap
               Expanded(flex: 3, child: Text('ITEM', style: style)),
               Expanded(flex: 2, child: Text('CATEGORY', style: style)),
               Expanded(flex: 2, child: Text('CURRENT STOCK', style: style)),
@@ -665,18 +929,21 @@ class _ItemsTableHeader extends StatelessWidget {
 class _ItemRow extends StatelessWidget {
   final InventoryItem item;
   final VoidCallback onTap;
+  final VoidCallback onEdit;
+  final VoidCallback onChangePhoto;
   final VoidCallback? onAddDelivery;
-  const _ItemRow({required this.item, required this.onTap, required this.onAddDelivery});
+  const _ItemRow({
+    required this.item,
+    required this.onTap,
+    required this.onEdit,
+    required this.onChangePhoto,
+    required this.onAddDelivery,
+  });
 
   @override
   Widget build(BuildContext context) {
     final style = _severityStyle(item.severity);
-    final thumbnail = Container(
-      width: 40,
-      height: 40,
-      decoration: BoxDecoration(color: _Ui.tanTint, borderRadius: BorderRadius.circular(10)),
-      child: Icon(_categoryIcon(item.category), size: 20, color: _Ui.tanDeep),
-    );
+    final thumbnail = _ItemThumb(item: item);
     final badge = Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(color: style.bg, borderRadius: BorderRadius.circular(20)),
@@ -693,10 +960,14 @@ class _ItemRow extends StatelessWidget {
       icon: const Icon(Icons.more_vert, size: 18, color: _Ui.muted),
       onSelected: (v) {
         if (v == 'open') onTap();
+        if (v == 'edit') onEdit();
+        if (v == 'photo') onChangePhoto();
         if (v == 'delivery' && onAddDelivery != null) onAddDelivery!();
       },
       itemBuilder: (_) => [
         const PopupMenuItem(value: 'open', child: Text('View details')),
+        const PopupMenuItem(value: 'edit', child: Text('Edit item')),
+        PopupMenuItem(value: 'photo', child: Text(item.hasImage ? 'Change photo' : 'Add photo')),
         if (onAddDelivery != null) const PopupMenuItem(value: 'delivery', child: Text('Add delivery')),
       ],
     );
@@ -1188,19 +1459,19 @@ class _QuantityDialogState extends State<_QuantityDialog> {
 }
 
 // ---------------------------------------------------------------------------
-// Add / edit item form
+// Add / edit item form (a full page, see _openAddItem for why)
 // ---------------------------------------------------------------------------
 
-class _ItemFormDialog extends StatefulWidget {
+class _ItemFormPage extends StatefulWidget {
   final InventoryRepository repo;
   final InventoryItem? existing;
-  const _ItemFormDialog({required this.repo, this.existing});
+  const _ItemFormPage({required this.repo, this.existing});
 
   @override
-  State<_ItemFormDialog> createState() => _ItemFormDialogState();
+  State<_ItemFormPage> createState() => _ItemFormPageState();
 }
 
-class _ItemFormDialogState extends State<_ItemFormDialog> {
+class _ItemFormPageState extends State<_ItemFormPage> {
   late final TextEditingController _name = TextEditingController(text: widget.existing?.ingredientName ?? '');
   late final TextEditingController _current = TextEditingController();
   late final TextEditingController _max = TextEditingController(
@@ -1212,6 +1483,11 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
   String? _unit;
   String? _category;
   DateTime? _expiryDate;
+
+  // Photo: a newly chosen one, or the existing one marked for removal.
+  XFile? _pickedImage;
+  Uint8List? _previewBytes;
+  bool _removePhoto = false;
 
   String? _nameError;
   String? _currentError;
@@ -1251,6 +1527,29 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
       lastDate: DateTime.now().add(const Duration(days: 365 * 2)),
     );
     if (picked != null) setState(() => _expiryDate = picked);
+  }
+
+  Future<void> _choosePhoto() async {
+    try {
+      final picked = await _pickPhoto();
+      if (picked == null || !mounted) return;
+      setState(() {
+        _pickedImage = picked.$1;
+        _previewBytes = picked.$2;
+        _removePhoto = false;
+        _error = null;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = "Couldn't open the photo: $e");
+    }
+  }
+
+  void _clearPhoto() {
+    setState(() {
+      _pickedImage = null;
+      _previewBytes = null;
+      _removePhoto = widget.existing?.hasImage ?? false;
+    });
   }
 
   Future<void> _submit() async {
@@ -1295,6 +1594,14 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
 
     setState(() => _saving = true);
     try {
+      // null = leave the photo alone, '' = remove it, anything else = the new link.
+      String? imageArg;
+      if (_previewBytes != null && _pickedImage != null) {
+        imageArg = await widget.repo.uploadImage(bytes: _previewBytes!, filename: _pickedImage!.name);
+      } else if (_removePhoto) {
+        imageArg = '';
+      }
+
       final InventoryItem saved;
       if (_editing) {
         saved = await widget.repo.update(
@@ -1305,6 +1612,7 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
           category: _category ?? '',
           expiryDate: expiryStr ?? '',
           unitCost: cost,
+          image: imageArg,
         );
       } else {
         saved = await widget.repo.create(
@@ -1315,6 +1623,7 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
           category: _category ?? '',
           expiryDate: expiryStr,
           unitCost: cost,
+          image: imageArg,
         );
       }
       if (mounted) Navigator.of(context).pop(saved);
@@ -1374,6 +1683,83 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
     );
   }
 
+  Widget _photoPicker() {
+    const size = 96.0;
+    final existingUrl = _removePhoto ? null : _fullImageUrl(widget.existing?.image);
+    final hasPhoto = _previewBytes != null || existingUrl != null;
+
+    final Widget inner;
+    if (_previewBytes != null) {
+      inner = Image.memory(_previewBytes!, fit: BoxFit.cover, width: size, height: size);
+    } else if (existingUrl != null) {
+      inner = Image.network(
+        existingUrl,
+        fit: BoxFit.cover,
+        width: size,
+        height: size,
+        errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.image_not_supported_outlined, color: _Ui.muted)),
+      );
+    } else {
+      inner = const Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.add_a_photo_outlined, color: _Ui.muted, size: 26),
+          SizedBox(height: 4),
+          Text('Add photo', style: TextStyle(fontSize: 11, color: _Ui.muted)),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        GestureDetector(
+          onTap: _saving ? null : _choosePhoto,
+          child: Container(
+            width: size,
+            height: size,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: _Ui.fieldFill,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _Ui.border),
+            ),
+            child: inner,
+          ),
+        ),
+        const SizedBox(width: 16),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Item photo (optional)', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.ink)),
+              const SizedBox(height: 2),
+              const Text('A clear photo helps staff spot the right item quickly.', style: TextStyle(fontSize: 12, color: _Ui.muted)),
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 4,
+                children: [
+                  TextButton.icon(
+                    onPressed: _saving ? null : _choosePhoto,
+                    icon: const Icon(Icons.photo_library_outlined, size: 18),
+                    label: Text(hasPhoto ? 'Change' : 'Choose photo'),
+                    style: TextButton.styleFrom(foregroundColor: _Ui.tanDeep),
+                  ),
+                  if (hasPhoto)
+                    TextButton.icon(
+                      onPressed: _saving ? null : _clearPhoto,
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      label: const Text('Remove'),
+                      style: TextButton.styleFrom(foregroundColor: _Ui.redText),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final fields = <Widget>[
@@ -1403,95 +1789,98 @@ class _ItemFormDialogState extends State<_ItemFormDialog> {
       _expiryField(),
     ];
 
-    return Dialog(
+    return Scaffold(
       backgroundColor: _Ui.dialogBg,
-      insetPadding: const EdgeInsets.all(16),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 640),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _editing ? 'Edit inventory item' : 'Add inventory item',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w500, color: _Ui.ink),
-              ),
-              const SizedBox(height: 16),
-              _textField(_name, 'Item name', icon: Icons.inventory_2_outlined, error: _nameError),
-              const SizedBox(height: 12),
-              LayoutBuilder(
-                builder: (context, constraints) {
-                  if (constraints.maxWidth < 480) {
-                    return Column(
-                      children: [
-                        for (var i = 0; i < fields.length; i++) ...[
-                          if (i > 0) const SizedBox(height: 12),
-                          fields[i],
+      appBar: AppBar(
+        title: Text(_editing ? 'Edit inventory item' : 'Add inventory item'),
+        backgroundColor: _Ui.tanDeep,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: Center(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 640),
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _photoPicker(),
+                const SizedBox(height: 20),
+                _textField(_name, 'Item name', icon: Icons.inventory_2_outlined, error: _nameError),
+                const SizedBox(height: 12),
+                LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (constraints.maxWidth < 480) {
+                      return Column(
+                        children: [
+                          for (var i = 0; i < fields.length; i++) ...[
+                            if (i > 0) const SizedBox(height: 12),
+                            fields[i],
+                          ],
                         ],
-                      ],
+                      );
+                    }
+                    final width = (constraints.maxWidth - 12) / 2;
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: fields.map((f) => SizedBox(width: width, child: f)).toList(),
                     );
-                  }
-                  final width = (constraints.maxWidth - 12) / 2;
-                  return Wrap(
-                    spacing: 12,
-                    runSpacing: 12,
-                    children: fields.map((f) => SizedBox(width: width, child: f)).toList(),
-                  );
-                },
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Items count as low stock at 30% of max stock or less, and critical at 10% or less. '
-                'Measure ingredients by weight or volume in g or ml (not kg or L) so recipes can use small amounts. '
-                'Changing the unit does not convert the numbers, so use Correct count afterwards. '
-                "Cost and expiry date are both optional, leave them blank if you're not tracking them yet.",
-                style: const TextStyle(fontSize: 12, color: _Ui.muted),
-              ),
-              if (_error != null) ...[
+                  },
+                ),
                 const SizedBox(height: 10),
-                Text(_error!, style: const TextStyle(fontSize: 13, color: _Ui.redText)),
-              ],
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: _saving ? null : () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        foregroundColor: _Ui.tanDeep,
-                        side: const BorderSide(color: _Ui.tan),
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
-                      child: const Text('Cancel'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: _saving ? null : _submit,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _Ui.tanDeep,
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                      ),
-                      child: _saving
-                          ? const SizedBox(
-                              height: 18,
-                              width: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
-                            )
-                          : Text(_editing ? 'Save changes' : 'Add item'),
-                    ),
-                  ),
+                const Text(
+                  'Items count as low stock at 30% of max stock or less, and critical at 10% or less. '
+                  'Measure ingredients by weight or volume in g or ml (not kg or L) so recipes can use small amounts. '
+                  'Changing the unit does not convert the numbers, so use Correct count afterwards. '
+                  "Cost and expiry date are both optional, leave them blank if you're not tracking them yet.",
+                  style: TextStyle(fontSize: 12, color: _Ui.muted),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 10),
+                  Text(_error!, style: const TextStyle(fontSize: 13, color: _Ui.redText)),
                 ],
-              ),
-            ],
+                const SizedBox(height: 20),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: _Ui.tanDeep,
+                          side: const BorderSide(color: _Ui.tan),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: const Text('Cancel'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: _saving ? null : _submit,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _Ui.tanDeep,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                        ),
+                        child: _saving
+                            ? const SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                              )
+                            : Text(_editing ? 'Save changes' : 'Add item'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
@@ -1608,9 +1997,8 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
   }
 
   Future<void> _edit() async {
-    final saved = await showDialog<InventoryItem>(
-      context: context,
-      builder: (_) => _ItemFormDialog(repo: widget.repo, existing: _item),
+    final saved = await Navigator.of(context).push<InventoryItem>(
+      MaterialPageRoute(builder: (_) => _ItemFormPage(repo: widget.repo, existing: _item)),
     );
     if (saved == null || !mounted) return;
     setState(() => _item = saved);
@@ -1642,6 +2030,8 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  _ItemThumb(item: _item, size: 56),
+                  const SizedBox(width: 14),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
