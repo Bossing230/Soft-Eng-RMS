@@ -6,20 +6,17 @@ import 'package:rms/Frontend/services/api_services.dart';
 import 'package:rms/Frontend/services/auth_services.dart';
 
 import '../../core/routes/app_router.dart';
+import '../../core/theme/app_theme.dart';
 
 enum _Step { email, code, newPassword, done }
 
-const _codeLength = 6; // matches the backend's 6-digit code — see authController.js
+const _codeLength = 6; // matches the backend's 6-digit code (authController.js)
 final _emailRe = RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$');
 
-/// The forgot-password flow: enter your email -> get a 6-digit code -> set a
-/// new password -> straight into your dashboard. Reached from the "Forgot
-/// password?" link on the login screen.
+/// Forgot-password flow: email -> 6-digit code -> new password -> dashboard.
 ///
-/// The code is always sent to the account's own email on file — the address
-/// typed here is only ever used to look that account up, never as a
-/// delivery address someone else could substitute — so this can't be used
-/// to redirect a reset to an address an attacker controls.
+/// The code is always sent to the account's own email on file. The address
+/// typed here is only used to look the account up.
 class ForgotPasswordPage extends StatefulWidget {
   const ForgotPasswordPage({super.key});
 
@@ -48,8 +45,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
   bool _obscurePassword = true;
   bool _obscureConfirm = true;
 
-  /// Bumped every time the code boxes should clear themselves (a fresh
-  /// code was sent, or a wrong one was just rejected).
+  /// Bumped whenever the code boxes should clear themselves (new code sent,
+  /// or a wrong one was rejected).
   int _codeBoxesGeneration = 0;
 
   @override
@@ -62,6 +59,8 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     super.dispose();
   }
 
+  // ---------------------------------------------------------------- timers
+
   void _startCooldown(int seconds) {
     _cooldownTimer?.cancel();
     setState(() => _resendCooldown = seconds);
@@ -72,7 +71,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       }
       setState(() {
         _resendCooldown -= 1;
-        if (_resendCooldown <= 0) timer.cancel();
+        if (_resendCooldown <= 0) {
+          _resendCooldown = 0;
+          timer.cancel();
+        }
       });
     });
   }
@@ -82,8 +84,6 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     if (mounted) AppRouter.goToRoleDashboard(context);
   }
 
-  /// Shows the confirmation number for a few seconds, then continues on to
-  /// the dashboard by itself (the person can also tap through immediately).
   void _startAutoContinue() {
     const seconds = 4;
     setState(() => _autoContinueSeconds = seconds);
@@ -100,7 +100,17 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     });
   }
 
+  // --------------------------------------------------------------- actions
+
+  String _friendly(Object e) {
+    if (e is TimeoutException) {
+      return 'The server is taking too long to respond. Please try again.';
+    }
+    return 'Could not reach the server. Check your connection and try again.';
+  }
+
   Future<void> _sendCode() async {
+    if (_busy) return;
     final email = _emailController.text.trim();
     if (!_emailRe.hasMatch(email)) {
       setState(() => _error = 'Enter a valid email address.');
@@ -125,14 +135,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       final retry = e.body?['retryAfterSeconds'];
       final maskedFromCooldown = e.body?['maskedEmail'] as String?;
       if (retry is int && maskedFromCooldown != null) {
-        // A code from an earlier request is still valid — move on to
-        // entering it instead of leaving the person stuck here with no way
-        // forward. Resend just respects the remaining cooldown.
+        // An earlier code is still valid: go enter it and respect the cooldown.
         setState(() {
           _email = email;
           _maskedEmail = maskedFromCooldown;
           _step = _Step.code;
           _code = '';
+          _error = null;
           _codeBoxesGeneration++;
         });
         _startCooldown(retry);
@@ -140,13 +149,14 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         setState(() => _error = e.message);
       }
     } catch (e) {
-      setState(() => _error = 'Could not send the code: $e');
+      if (mounted) setState(() => _error = _friendly(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _verifyCode() async {
+    if (_busy) return;
     if (_code.length != _codeLength) {
       setState(() => _error = 'Enter all $_codeLength digits from your email.');
       return;
@@ -166,16 +176,17 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       setState(() {
         _error = e.message;
         _code = '';
-        _codeBoxesGeneration++; // clear the boxes so a wrong code isn't just re-submitted by accident
+        _codeBoxesGeneration++; // clear the boxes so a wrong code isn't re-sent by accident
       });
     } catch (e) {
-      setState(() => _error = 'Could not verify the code: $e');
+      if (mounted) setState(() => _error = _friendly(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
 
   Future<void> _setNewPassword() async {
+    if (_busy) return;
     final password = _passwordController.text;
     final confirm = _confirmController.text;
     if (password.length < 6) {
@@ -201,11 +212,13 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
-      setState(() => _error = 'Could not reset the password: $e');
+      if (mounted) setState(() => _error = _friendly(e));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
   }
+
+  // ------------------------------------------------------------------- UI
 
   String _appBarTitle() {
     switch (_step) {
@@ -221,22 +234,84 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 
   @override
   Widget build(BuildContext context) {
+    final content = switch (_step) {
+      _Step.email => _emailStep(),
+      _Step.code => _codeStep(),
+      _Step.newPassword => _newPasswordStep(),
+      _Step.done => _doneStep(),
+    };
+
     return Scaffold(
       appBar: _step == _Step.done ? null : AppBar(title: Text(_appBarTitle())),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: switch (_step) {
-              _Step.email => _emailStep(),
-              _Step.code => _codeStep(),
-              _Step.newPassword => _newPasswordStep(),
-              _Step.done => _doneStep(),
-            },
+            constraints: const BoxConstraints(maxWidth: 440),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_step != _Step.done) ...[
+                  _stepper(),
+                  const SizedBox(height: 16),
+                ],
+                Card(
+                  color: Colors.white,
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 200),
+                      child: KeyedSubtree(key: ValueKey(_step), child: content),
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _stepper() {
+    final current = switch (_step) {
+      _Step.email => 0,
+      _Step.code => 1,
+      _ => 2,
+    };
+    const labels = ['Email', 'Verify', 'New password'];
+    return Row(
+      children: [
+        for (var i = 0; i < labels.length; i++)
+          Expanded(
+            child: Padding(
+              padding: EdgeInsets.only(right: i < labels.length - 1 ? 8 : 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 250),
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: i <= current ? AppTheme.primary : Colors.black12,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    labels[i],
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: i == current ? FontWeight.w700 : FontWeight.w400,
+                      color: i <= current ? Colors.black87 : Colors.black45,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
     );
   }
 
@@ -244,84 +319,142 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     if (_error == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.only(top: 12),
-      child: Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.error_outline, size: 18, color: Theme.of(context).colorScheme.error),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(_error!, style: TextStyle(color: Theme.of(context).colorScheme.error, fontSize: 13)),
+          ),
+        ],
+      ),
     );
   }
+
+  Widget _buttonChild(String label, String busyLabel) {
+    if (!_busy) return Text(label);
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+        const SizedBox(width: 10),
+        Text(busyLabel),
+      ],
+    );
+  }
+
+  ButtonStyle get _linkStyle => ButtonStyle(
+        overlayColor: WidgetStateProperty.all(Colors.transparent),
+        backgroundColor: WidgetStateProperty.all(Colors.transparent),
+        splashFactory: NoSplash.splashFactory,
+        foregroundColor: WidgetStateProperty.resolveWith(
+          (s) => s.contains(WidgetState.disabled)
+              ? Colors.black26
+              : (s.contains(WidgetState.hovered) ? AppTheme.primary : Colors.black54),
+        ),
+        textStyle: WidgetStateProperty.resolveWith(
+          (s) => TextStyle(
+            fontSize: 13,
+            decoration: s.contains(WidgetState.hovered) ? TextDecoration.underline : TextDecoration.none,
+          ),
+        ),
+      );
+
+  String _fmt(int seconds) => '${seconds ~/ 60}:${(seconds % 60).toString().padLeft(2, '0')}';
 
   Widget _emailStep() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.lock_reset, size: 48),
-        const SizedBox(height: 16),
+        const Icon(Icons.lock_reset, size: 44, color: AppTheme.primary),
+        const SizedBox(height: 14),
         const Text(
-          'Enter the email address on your account and we\'ll send you a 6-digit verification code.',
+          "Enter the email address on your account and we'll send you a 6-digit verification code.",
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 20),
         TextField(
           controller: _emailController,
           keyboardType: TextInputType.emailAddress,
+          textInputAction: TextInputAction.send,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'Email address', prefixIcon: Icon(Icons.email_outlined)),
+          decoration: InputDecoration(
+            labelText: 'Email address',
+            prefixIcon: const Icon(Icons.email_outlined),
+            fillColor: AppTheme.background,
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: Colors.black12)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: AppTheme.primary, width: 2)),
+          ),
           onSubmitted: (_) => _sendCode(),
         ),
         _errorText(),
         const SizedBox(height: 20),
         ElevatedButton(
           onPressed: _busy ? null : _sendCode,
-          child: _busy
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Send code'),
+          child: _buttonChild('Send code', 'Sending...'),
         ),
-        const SizedBox(height: 8),
-        TextButton(onPressed: _busy ? null : () => Navigator.of(context).pop(), child: const Text('Back to login')),
+        const SizedBox(height: 4),
+        TextButton(
+          style: _linkStyle,
+          onPressed: _busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('Back to login'),
+        ),
       ],
     );
   }
 
   Widget _codeStep() {
-    final canResend = !_busy && _resendCooldown <= 0;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Forgot your password', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const Text('Check your email', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
-        Text('Enter the verification code sent to your email\n$_maskedEmail', style: const TextStyle(color: Colors.grey)),
+        Text.rich(
+          TextSpan(
+            text: 'Enter the 6-digit code sent to ',
+            children: [TextSpan(text: _maskedEmail, style: const TextStyle(fontWeight: FontWeight.w600, color: Colors.black87))],
+          ),
+          style: const TextStyle(color: Colors.black54),
+        ),
         const SizedBox(height: 24),
         Center(
           child: _OtpBoxes(
             key: ValueKey(_codeBoxesGeneration),
             length: _codeLength,
             enabled: !_busy,
-            onChanged: (value) => setState(() => _code = value),
+            hasError: _error != null,
+            onChanged: (value) => setState(() {
+              _code = value;
+              if (_error != null) _error = null;
+            }),
             onCompleted: (value) {
               setState(() => _code = value);
               _verifyCode();
             },
           ),
         ),
+        _errorText(),
         const SizedBox(height: 14),
         Center(
-          child: canResend
-              ? TextButton(onPressed: _sendCode, child: const Text('Resend code'))
-              : Text(
-                  "Didn't receive the code? 00:${_resendCooldown.toString().padLeft(2, '0')}",
-                  style: const TextStyle(color: Colors.grey, fontSize: 13),
+          child: _resendCooldown > 0
+              ? Text('Resend code in ${_fmt(_resendCooldown)}', style: const TextStyle(color: Colors.black45, fontSize: 13))
+              : TextButton(
+                  style: _linkStyle,
+                  onPressed: _busy ? null : _sendCode,
+                  child: const Text("Didn't get it? Resend code"),
                 ),
         ),
-        _errorText(),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
         ElevatedButton(
           onPressed: (_busy || _code.length != _codeLength) ? null : _verifyCode,
-          child: _busy
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Continue'),
+          child: _buttonChild('Continue', 'Checking...'),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
         TextButton(
+          style: _linkStyle,
           onPressed: _busy
               ? null
               : () => setState(() {
@@ -334,35 +467,76 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
     );
   }
 
+  // 0..4 strength score for the meter.
+  int _strength(String p) {
+    var s = 0;
+    if (p.length >= 6) s++;
+    if (p.length >= 10) s++;
+    if (RegExp(r'[a-z]').hasMatch(p) && RegExp(r'[A-Z]').hasMatch(p)) s++;
+    if (RegExp(r'\d').hasMatch(p)) s++;
+    if (RegExp(r'[^A-Za-z0-9]').hasMatch(p)) s++;
+    return s.clamp(0, 4);
+  }
+
+  Widget _strengthMeter() {
+    final p = _passwordController.text;
+    if (p.isEmpty) return const SizedBox.shrink();
+    final s = _strength(p);
+    const labels = ['Too weak', 'Weak', 'Fair', 'Good', 'Strong'];
+    final colors = [Colors.red, Colors.deepOrange, Colors.amber[800]!, Colors.lightGreen[700]!, Colors.green[700]!];
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(3),
+              child: LinearProgressIndicator(value: (s + 1) / 5, minHeight: 5, backgroundColor: Colors.black12, color: colors[s]),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(labels[s], style: TextStyle(fontSize: 12, color: colors[s], fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
   Widget _newPasswordStep() {
+    final mismatch = _confirmController.text.isNotEmpty && _confirmController.text != _passwordController.text;
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         const Text('Create a new password', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 6),
-        const Text('Enter a new password and try not to forget it.', style: TextStyle(color: Colors.grey)),
+        const Text('Use at least 6 characters. A longer password with mixed characters is stronger.', style: TextStyle(color: Colors.black54)),
         const SizedBox(height: 24),
         TextField(
           controller: _passwordController,
           obscureText: _obscurePassword,
           autofocus: true,
+          onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
             labelText: 'New password',
             prefixIcon: const Icon(Icons.lock_outline),
+            fillColor: AppTheme.background,
             suffixIcon: IconButton(
               icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
               onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
             ),
           ),
         ),
-        const SizedBox(height: 12),
+        _strengthMeter(),
+        const SizedBox(height: 14),
         TextField(
           controller: _confirmController,
           obscureText: _obscureConfirm,
+          onChanged: (_) => setState(() {}),
           decoration: InputDecoration(
-            labelText: 'Re-enter the new password',
+            labelText: 'Confirm new password',
             prefixIcon: const Icon(Icons.lock_outline),
+            fillColor: AppTheme.background,
+            errorText: mismatch ? "Passwords don't match" : null,
             suffixIcon: IconButton(
               icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility),
               onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
@@ -371,12 +545,10 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           onSubmitted: (_) => _setNewPassword(),
         ),
         _errorText(),
-        const SizedBox(height: 16),
+        const SizedBox(height: 18),
         ElevatedButton(
           onPressed: _busy ? null : _setNewPassword,
-          child: _busy
-              ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Continue'),
+          child: _buttonChild('Save password', 'Saving...'),
         ),
       ],
     );
@@ -387,18 +559,24 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.check_circle, color: Colors.green, size: 56),
+        TweenAnimationBuilder<double>(
+          tween: Tween(begin: 0.6, end: 1),
+          duration: const Duration(milliseconds: 400),
+          curve: Curves.elasticOut,
+          builder: (_, v, child) => Transform.scale(scale: v, child: child),
+          child: const Icon(Icons.check_circle, color: Colors.green, size: 60),
+        ),
         const SizedBox(height: 16),
-        const Text('Password reset', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const Text('Password changed', textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        const Text('Your password has been changed.', textAlign: TextAlign.center),
+        const Text("You're signed in with your new password.", textAlign: TextAlign.center),
         const SizedBox(height: 16),
         Container(
           padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(color: Colors.grey[100], borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(color: AppTheme.background, borderRadius: BorderRadius.circular(10)),
           child: Column(
             children: [
-              const Text('Confirmation number', style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text('Confirmation number', style: TextStyle(fontSize: 12, color: Colors.black54)),
               const SizedBox(height: 4),
               SelectableText(_confirmationNumber, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1)),
             ],
@@ -407,7 +585,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         const SizedBox(height: 24),
         ElevatedButton(
           onPressed: _goToDashboard,
-          child: Text(_autoContinueSeconds > 0 ? 'Continue to dashboard (${_autoContinueSeconds}s)' : 'Continue to dashboard'),
+          child: Text(_autoContinueSeconds > 0 ? 'Go to dashboard (${_autoContinueSeconds}s)' : 'Go to dashboard'),
         ),
       ],
     );
@@ -415,16 +593,29 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
 }
 
 // ---------------------------------------------------------------------------
-// Segmented digit-code input: one box per digit, auto-advancing, matching
-// the "enter the code" design.
+// Segmented digit-code input: one box per digit, auto-advancing, paste-aware.
+//
+// BUG FIX: the old version wrapped each TextField in a KeyboardListener that
+// used the SAME FocusNode as the TextField. That nests a node inside itself,
+// which creates a loop in Flutter's focus tree and freezes the page
+// ("Page Unresponsive"). Backspace handling now lives on the node itself
+// (FocusNode.onKeyEvent), so there is exactly one Focus widget per node.
 // ---------------------------------------------------------------------------
 
 class _OtpBoxes extends StatefulWidget {
   final int length;
   final bool enabled;
+  final bool hasError;
   final ValueChanged<String> onChanged;
   final ValueChanged<String> onCompleted;
-  const _OtpBoxes({super.key, required this.length, required this.enabled, required this.onChanged, required this.onCompleted});
+  const _OtpBoxes({
+    super.key,
+    required this.length,
+    required this.enabled,
+    required this.hasError,
+    required this.onChanged,
+    required this.onCompleted,
+  });
 
   @override
   State<_OtpBoxes> createState() => _OtpBoxesState();
@@ -432,7 +623,31 @@ class _OtpBoxes extends StatefulWidget {
 
 class _OtpBoxesState extends State<_OtpBoxes> {
   late final List<TextEditingController> _controllers = List.generate(widget.length, (_) => TextEditingController());
-  late final List<FocusNode> _focusNodes = List.generate(widget.length, (_) => FocusNode());
+  late final List<FocusNode> _focusNodes = List.generate(
+    widget.length,
+    (i) => FocusNode(
+      onKeyEvent: (node, event) {
+        if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.backspace) {
+          _onBackspace(i);
+        }
+        return KeyEventResult.ignored;
+      },
+    ),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    // Select the digit when a box gets focus so typing replaces it.
+    for (var i = 0; i < widget.length; i++) {
+      _focusNodes[i].addListener(() {
+        if (_focusNodes[i].hasFocus) {
+          final c = _controllers[i];
+          c.selection = TextSelection(baseOffset: 0, extentOffset: c.text.length);
+        }
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -448,8 +663,8 @@ class _OtpBoxesState extends State<_OtpBoxes> {
   String get _value => _controllers.map((c) => c.text).join();
 
   void _onChanged(int index, String value) {
-    // Paste or autofill may drop more than one character into a single box.
     if (value.length > 1) {
+      // Paste or autofill dropped several digits into one box: spread them out.
       final digits = value.replaceAll(RegExp(r'\D'), '');
       for (var i = 0; i < widget.length; i++) {
         _controllers[i].text = i < digits.length ? digits[i] : '';
@@ -474,8 +689,12 @@ class _OtpBoxesState extends State<_OtpBoxes> {
     }
   }
 
+  OutlineInputBorder _border(Color color, double width) =>
+      OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: color, width: width));
+
   @override
   Widget build(BuildContext context) {
+    final errorColor = Theme.of(context).colorScheme.error;
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -484,30 +703,28 @@ class _OtpBoxesState extends State<_OtpBoxes> {
           SizedBox(
             width: 44,
             height: 54,
-            child: KeyboardListener(
-              // Shares the TextField's own focus node below, rather than
-              // creating a new one here: a fresh FocusNode on every rebuild
-              // would leak (never disposed) and would never actually be
-              // focused, since the TextField focuses `_focusNodes[i]` instead
-              // — so it wouldn't see the key presses it's meant to catch.
+            child: TextField(
+              controller: _controllers[i],
               focusNode: _focusNodes[i],
-              onKeyEvent: (event) {
-                if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.backspace) {
-                  _onBackspace(i);
-                }
-              },
-              child: TextField(
-                controller: _controllers[i],
-                focusNode: _focusNodes[i],
-                enabled: widget.enabled,
-                textAlign: TextAlign.center,
-                keyboardType: TextInputType.number,
-                maxLength: 1,
-                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                decoration: const InputDecoration(counterText: '', contentPadding: EdgeInsets.zero),
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                onChanged: (v) => _onChanged(i, v),
+              enabled: widget.enabled,
+              autofocus: i == 0,
+              textAlign: TextAlign.center,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(widget.length), // lets a full code be pasted into one box
+              ],
+              decoration: InputDecoration(
+                counterText: '',
+                contentPadding: EdgeInsets.zero,
+                filled: true,
+                fillColor: AppTheme.background,
+                enabledBorder: _border(widget.hasError ? errorColor : Colors.black26, 1.2),
+                disabledBorder: _border(Colors.black12, 1.2),
+                focusedBorder: _border(widget.hasError ? errorColor : AppTheme.primary, 2),
               ),
+              onChanged: (v) => _onChanged(i, v),
             ),
           ),
         ],

@@ -30,23 +30,30 @@ class ApiService {
     throw ApiException(message, res.statusCode, body is Map ? Map<String, dynamic>.from(body) : null);
   }
 
-  /// Retries a request up to 2 extra times if it fails with a network
-  /// error or a 502/503/504 — the exact symptoms of a free-tier host
-  /// (like Render) still waking up from sleep. Each retry waits a bit
-  /// longer, giving the server time to finish booting.
-  Future<http.Response> _withRetry(Future<http.Response> Function() request) async {
+  /// Retries a request up to [maxRetries] extra times if it fails with a
+  /// network error or a 502/503/504 (the symptoms of a free-tier host such
+  /// as Render still waking up). Each retry waits a bit longer.
+  ///
+  /// Pass `retry: false` (maxRetries 0) for requests that must NOT be sent
+  /// twice, such as "email me a code": a timed-out request may still have
+  /// reached the server, and re-sending it creates duplicate codes/emails.
+  Future<http.Response> _withRetry(
+    Future<http.Response> Function() request, {
+    int maxRetries = 2,
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
     const delays = [Duration(seconds: 3), Duration(seconds: 6)];
     for (var attempt = 0; ; attempt++) {
       try {
-        final res = await request().timeout(const Duration(seconds: 20));
+        final res = await request().timeout(timeout);
         final isGatewayError = res.statusCode == 502 || res.statusCode == 503 || res.statusCode == 504;
-        if (isGatewayError && attempt < delays.length) {
+        if (isGatewayError && attempt < maxRetries && attempt < delays.length) {
           await Future.delayed(delays[attempt]);
           continue;
         }
         return res;
       } catch (e) {
-        if (attempt < delays.length) {
+        if (attempt < maxRetries && attempt < delays.length) {
           await Future.delayed(delays[attempt]);
           continue;
         }
@@ -60,8 +67,17 @@ class ApiService {
     return _handle(res);
   }
 
-  Future<dynamic> post(String path, {Map<String, dynamic>? body}) async {
-    final res = await _withRetry(() => http.post(_uri(path), headers: _headers, body: jsonEncode(body ?? {})));
+  Future<dynamic> post(
+    String path, {
+    Map<String, dynamic>? body,
+    bool retry = true,
+    Duration timeout = const Duration(seconds: 20),
+  }) async {
+    final res = await _withRetry(
+      () => http.post(_uri(path), headers: _headers, body: jsonEncode(body ?? {})),
+      maxRetries: retry ? 2 : 0,
+      timeout: timeout,
+    );
     return _handle(res);
   }
 
@@ -80,11 +96,7 @@ class ApiService {
     return _handle(res);
   }
 
-  /// For endpoints that return a binary file (PDF, Excel) instead of JSON —
-  /// used for "Download Report" style buttons. Unlike the other methods this
-  /// never runs the body through jsonDecode, since a successful response here
-  /// isn't JSON; an error response (4xx/5xx) still is, so that path is
-  /// decoded as usual to surface a real error message.
+  /// For endpoints that return a binary file (PDF, Excel) instead of JSON.
   Future<Uint8List> getBytes(String path, {Map<String, dynamic>? query}) async {
     final res = await _withRetry(() => http.get(_uri(path, query), headers: _headers));
     if (res.statusCode >= 200 && res.statusCode < 300) {
@@ -135,8 +147,8 @@ class ApiException implements Exception {
   final int statusCode;
 
   /// The full decoded error response, when the server sent extra fields
-  /// beyond `error` (e.g. login lockout details: lockedUntil, lockoutMinutes,
-  /// justLocked, attemptsRemaining). Null if the body wasn't a JSON object.
+  /// beyond `error` (e.g. login lockout details, or `retryAfterSeconds` and
+  /// `maskedEmail` for the forgot-password cooldown).
   final Map<String, dynamic>? body;
 
   ApiException(this.message, this.statusCode, [this.body]);
