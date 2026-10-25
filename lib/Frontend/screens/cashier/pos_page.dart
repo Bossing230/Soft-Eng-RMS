@@ -3,6 +3,7 @@ import 'package:rms/Frontend/models/menu.dart';
 import 'package:rms/Frontend/repositories/order_repository.dart';
 import 'package:rms/Frontend/services/api_services.dart';
 
+import '../../core/constants/app_constants.dart';
 import '../../repositories/menu_repository.dart';
 import '../../repositories/table_repository.dart';
 
@@ -292,6 +293,8 @@ class _PosPageState extends State<PosPage> {
       );
     }
 
+    final visible = _visibleMenu;
+
     final menuArea = Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -328,18 +331,27 @@ class _PosPageState extends State<PosPage> {
           ),
         ),
         Expanded(
-          child: _visibleMenu.isEmpty
+          child: visible.isEmpty
               ? const Center(child: Text('No menu items match.', style: TextStyle(color: _Ui.muted)))
               : GridView.builder(
                   padding: const EdgeInsets.all(16),
+                  // Same idea as the Menu page: cards scale with the screen and
+                  // are tall enough for the photo to fill the top.
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 190,
-                    mainAxisExtent: 188,
+                    maxCrossAxisExtent: 210,
+                    mainAxisExtent: 230,
                     crossAxisSpacing: 14,
                     mainAxisSpacing: 14,
                   ),
-                  itemCount: _visibleMenu.length,
-                  itemBuilder: (_, i) => _MenuTile(item: _visibleMenu[i], onTap: () => _addToCart(_visibleMenu[i])),
+                  itemCount: visible.length,
+                  itemBuilder: (_, i) {
+                    final item = visible[i];
+                    return _MenuTile(
+                      item: item,
+                      quantityInCart: _cart[item.menuId]?.quantity ?? 0,
+                      onTap: () => _addToCart(item),
+                    );
+                  },
                 ),
         ),
       ],
@@ -562,60 +574,140 @@ class _CategoryPills extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Menu tile
+// Menu tile (same look as the card on the Menu page, tap to add)
 // ---------------------------------------------------------------------------
 
 class _MenuTile extends StatelessWidget {
   final MenuItem item;
+
+  /// How many of this dish are already in the current order (0 = none).
+  final int quantityInCart;
   final VoidCallback onTap;
-  const _MenuTile({required this.item, required this.onTap});
+  const _MenuTile({required this.item, required this.quantityInCart, required this.onTap});
+
+  static const _grayscale = ColorFilter.matrix(<double>[
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0.2126, 0.7152, 0.0722, 0, 0,
+    0, 0, 0, 1, 0,
+  ]);
+
+  /// Photos stored on Cloudinary are full links; older ones are a path on our own server.
+  String? get _imageUrl {
+    final path = item.image;
+    if (path == null || path.isEmpty) return null;
+    if (path.startsWith('http')) return path;
+    final base = AppConstants.apiBaseUrl.replaceAll('/api', '');
+    return '$base$path';
+  }
+
+  /// Bottle and can photos are shown whole instead of being cropped.
+  bool get _isDrink => (item.station ?? '').toLowerCase() == 'drinks';
+
+  Widget _placeholder() => Container(
+        color: _Ui.tanTint,
+        alignment: Alignment.center,
+        child: const Icon(Icons.restaurant, color: _Ui.tanDeep, size: 30),
+      );
+
+  Widget _image() {
+    final url = _imageUrl;
+    if (url == null) return _placeholder();
+
+    Widget image = Image.network(
+      url,
+      fit: _isDrink ? BoxFit.contain : BoxFit.cover,
+      width: double.infinity,
+      height: double.infinity,
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) return child;
+        return Container(
+          color: _Ui.tanTint,
+          alignment: Alignment.center,
+          child: const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2, color: _Ui.tanDeep)),
+        );
+      },
+      errorBuilder: (_, __, ___) => _placeholder(),
+    );
+
+    if (!item.isAvailable) {
+      image = ColorFiltered(colorFilter: _grayscale, child: Opacity(opacity: 0.55, child: image));
+    }
+    return Container(color: _isDrink ? Colors.white : _Ui.tanTint, child: image);
+  }
+
+  Widget _badge(String text, {required Color bg}) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(8)),
+        child: Text(text, style: const TextStyle(color: Colors.white, fontSize: 10.5, fontWeight: FontWeight.w600)),
+      );
 
   @override
   Widget build(BuildContext context) {
+    final available = item.isAvailable;
+    final inCart = quantityInCart > 0;
+    final category = (item.categoryName ?? '').trim();
+
     return Material(
       color: Colors.white,
       borderRadius: BorderRadius.circular(14),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
+        onTap: available ? onTap : null,
         child: Container(
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(14), border: Border.all(color: _Ui.border)),
-          padding: const EdgeInsets.all(10),
+          // Drawn over the photo so the border stays visible around it.
+          foregroundDecoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: inCart ? _Ui.tanDeep : _Ui.border, width: inCart ? 1.8 : 1),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // The photo takes all the height left over, edge to edge.
               Expanded(
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(10),
-                  child: Container(
-                    width: double.infinity,
-                    color: _Ui.tanTint,
-                    child: item.image == null || item.image!.isEmpty
-                        ? const Center(child: Icon(Icons.restaurant, color: _Ui.tanDeep, size: 28))
-                        : Image.network(
-                            item.image!,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Center(child: Icon(Icons.restaurant, color: _Ui.tanDeep, size: 28)),
-                          ),
-                  ),
+                child: Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _image(),
+                    if (category.isNotEmpty)
+                      Positioned(top: 8, left: 8, child: _badge(category, bg: Colors.black54)),
+                    if (inCart)
+                      Positioned(
+                        top: 8,
+                        right: 8,
+                        child: Container(
+                          constraints: const BoxConstraints(minWidth: 26, minHeight: 26),
+                          padding: const EdgeInsets.symmetric(horizontal: 7),
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(color: _Ui.tanDeep, borderRadius: BorderRadius.circular(13)),
+                          child: Text('×$quantityInCart', style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                        ),
+                      ),
+                    if (!available)
+                      Align(
+                        alignment: Alignment.bottomLeft,
+                        child: Padding(padding: const EdgeInsets.all(8), child: _badge('SOLD OUT', bg: Colors.red.shade700)),
+                      ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                item.foodName,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _Ui.ink),
-              ),
-              if (item.categoryName != null)
-                Text(
-                  item.categoryName!,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 11, color: _Ui.muted),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      item.foodName,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.ink),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(_peso(item.price), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800, color: _Ui.tanDeep)),
+                  ],
                 ),
-              const SizedBox(height: 2),
-              Text(_peso(item.price), style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.tanDeep)),
+              ),
             ],
           ),
         ),
