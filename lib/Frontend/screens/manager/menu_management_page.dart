@@ -1,9 +1,21 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:rms/Frontend/models/menu.dart';
 import '../../repositories/menu_repository.dart';
 import '../../widgets/menu_card.dart';
 import '../shared/add_menu_item_page.dart';
 import '../shared/edit_recipe_page.dart';
+
+enum MenuSort { nameAsc, priceLow, priceHigh, availableFirst }
+
+extension on MenuSort {
+  String get label => switch (this) {
+        MenuSort.nameAsc => 'Name (A-Z)',
+        MenuSort.priceLow => 'Price: low to high',
+        MenuSort.priceHigh => 'Price: high to low',
+        MenuSort.availableFirst => 'Available first',
+      };
+}
 
 class MenuManagementPage extends StatefulWidget {
   const MenuManagementPage({super.key});
@@ -18,13 +30,40 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
   List<Map<String, dynamic>> _categories = [];
   bool _loading = true;
   final _searchCtrl = TextEditingController();
+  Timer? _debounce;
 
   // null means "All" is selected.
   int? _selectedCategoryId;
+  bool _availableOnly = false;
+  MenuSort _sort = MenuSort.nameAsc;
 
   List<MenuItem> get _filteredItems {
-    if (_selectedCategoryId == null) return _items;
-    return _items.where((i) => i.categoryId == _selectedCategoryId).toList();
+    var list = _items.where((i) {
+      if (_selectedCategoryId != null && i.categoryId != _selectedCategoryId) return false;
+      if (_availableOnly && !i.isAvailable) return false;
+      return true;
+    }).toList();
+
+    switch (_sort) {
+      case MenuSort.nameAsc:
+        list.sort((a, b) => a.foodName.toLowerCase().compareTo(b.foodName.toLowerCase()));
+        break;
+      case MenuSort.priceLow:
+        list.sort((a, b) => a.price.compareTo(b.price));
+        break;
+      case MenuSort.priceHigh:
+        list.sort((a, b) => b.price.compareTo(a.price));
+        break;
+      case MenuSort.availableFirst:
+        list.sort((a, b) {
+          if (a.isAvailable == b.isAvailable) {
+            return a.foodName.toLowerCase().compareTo(b.foodName.toLowerCase());
+          }
+          return a.isAvailable ? -1 : 1;
+        });
+        break;
+    }
+    return list;
   }
 
   @override
@@ -33,15 +72,35 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
     _load();
   }
 
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
   Future<void> _load() async {
     setState(() => _loading = true);
-    final items = await _repo.getAll(search: _searchCtrl.text.isEmpty ? null : _searchCtrl.text);
-    final categories = await _repo.getCategories();
-    setState(() {
-      _items = items;
-      _categories = categories;
-      _loading = false;
-    });
+    try {
+      final items = await _repo.getAll(search: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim());
+      final categories = await _repo.getCategories();
+      if (!mounted) return;
+      setState(() {
+        _items = items;
+        _categories = categories;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to load menu: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  void _onSearchChanged(String _) {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 400), _load);
   }
 
   Future<void> _showAddCategoryDialog() async {
@@ -101,15 +160,47 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
     }
   }
 
+  /// Opens the same form as "Add Item", pre-filled with this dish.
+  Future<void> _editItem(MenuItem item) async {
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => AddMenuItemPage(categories: _categories, item: item)),
+    );
+    if (saved == true) {
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${item.foodName} updated.')));
+      }
+    }
+  }
+
+  /// The card already asked "Are you sure?" before calling this.
+  Future<void> _deleteItem(MenuItem item) async {
+    try {
+      await _repo.delete(item.menuId);
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${item.foodName} deleted.')));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('Could not delete ${item.foodName}. If it is used in past orders, mark it Sold out instead. ($e)'),
+        ));
+      }
+    }
+  }
+
   Widget _categoryPill({required String label, required bool selected, required VoidCallback onTap}) {
+    final primary = Theme.of(context).colorScheme.primary;
     return GestureDetector(
       onTap: onTap,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? Theme.of(context).colorScheme.primary : Colors.white,
+          color: selected ? primary : Colors.white,
           borderRadius: BorderRadius.circular(24),
-          border: Border.all(color: selected ? Theme.of(context).colorScheme.primary : Colors.grey[300]!),
+          border: Border.all(color: selected ? primary : Colors.grey[300]!),
         ),
         child: Text(
           label,
@@ -123,12 +214,79 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
     );
   }
 
+  Widget _toolbar(int shown) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: Row(
+        children: [
+          Text('$shown item${shown == 1 ? '' : 's'}', style: TextStyle(color: Colors.grey[700], fontSize: 13)),
+          const Spacer(),
+          FilterChip(
+            label: const Text('Available only'),
+            selected: _availableOnly,
+            onSelected: (v) => setState(() => _availableOnly = v),
+          ),
+          const SizedBox(width: 8),
+          PopupMenuButton<MenuSort>(
+            tooltip: 'Sort',
+            initialValue: _sort,
+            onSelected: (v) => setState(() => _sort = v),
+            itemBuilder: (_) => [
+              for (final s in MenuSort.values) PopupMenuItem(value: s, child: Text(s.label)),
+            ],
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.sort, size: 18),
+                  const SizedBox(width: 4),
+                  Text(_sort.label, style: const TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyState() {
+    final searching = _searchCtrl.text.trim().isNotEmpty;
+    return ListView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      children: [
+        const SizedBox(height: 80),
+        Icon(Icons.restaurant_menu, size: 56, color: Colors.grey[400]),
+        const SizedBox(height: 12),
+        Center(
+          child: Text(
+            searching ? 'No items match "${_searchCtrl.text.trim()}"' : 'No menu items here yet',
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+        ),
+        const SizedBox(height: 4),
+        Center(
+          child: Text(
+            searching || _availableOnly || _selectedCategoryId != null
+                ? 'Try a different search or clear the filters.'
+                : 'Tap "Add Item" to create your first dish.',
+            style: TextStyle(color: Colors.grey[600]),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final items = _filteredItems;
+
     return Scaffold(
       floatingActionButton: Column(
         mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.end,
+        mainAxisSize: MainAxisSize.min,
         children: [
           FloatingActionButton.extended(
             heroTag: 'addCategory',
@@ -155,8 +313,15 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
               decoration: InputDecoration(
                 hintText: 'Search menu items...',
                 prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(icon: const Icon(Icons.clear), onPressed: () { _searchCtrl.clear(); _load(); }),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.clear),
+                  onPressed: () {
+                    _searchCtrl.clear();
+                    _load();
+                  },
+                ),
               ),
+              onChanged: _onSearchChanged,
               onSubmitted: (_) => _load(),
             ),
           ),
@@ -168,14 +333,14 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 children: [
                   _categoryPill(
-                    label: 'All',
+                    label: 'All (${_items.length})',
                     selected: _selectedCategoryId == null,
                     onTap: () => setState(() => _selectedCategoryId = null),
                   ),
                   const SizedBox(width: 8),
                   for (final c in _categories) ...[
                     _categoryPill(
-                      label: c['category_name'],
+                      label: '${c['category_name']} (${_items.where((i) => i.categoryId == c['category_id']).length})',
                       selected: _selectedCategoryId == c['category_id'],
                       onTap: () => setState(() => _selectedCategoryId = c['category_id']),
                     ),
@@ -185,47 +350,40 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
               ),
             ),
           const SizedBox(height: 8),
+          _toolbar(items.length),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : RefreshIndicator(
                     onRefresh: _load,
-                    child: GridView.builder(
-                      padding: const EdgeInsets.all(12),
-                      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(maxCrossAxisExtent: 280, mainAxisExtent: 270, crossAxisSpacing: 12, mainAxisSpacing: 12),
-                      itemCount: _filteredItems.length,
-                      itemBuilder: (_, i) {
-                        final item = _filteredItems[i];
-                        return Stack(
-                          children: [
-                            MenuCard(
-                              item: item,
-                              onToggleAvailability: () async {
-                                await _repo.setAvailability(item.menuId, !item.isAvailable);
-                                _load();
-                              },
+                    child: items.isEmpty
+                        ? _emptyState()
+                        : GridView.builder(
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            // Extra bottom padding keeps the last row clear of the floating buttons.
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 160),
+                            gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                              maxCrossAxisExtent: 260,
+                              mainAxisExtent: 310,
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
                             ),
-                            // Opens this dish's recipe (ingredients taken from inventory per order).
-                            Positioned(
-                              top: 8,
-                              right: 8,
-                              child: Material(
-                                color: Colors.white,
-                                shape: const CircleBorder(),
-                                elevation: 1,
-                                child: IconButton(
-                                  tooltip: 'Recipe',
-                                  icon: const Icon(Icons.menu_book_outlined, size: 18),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints.tightFor(width: 34, height: 34),
-                                  onPressed: () => _openRecipe(item),
-                                ),
-                              ),
-                            ),
-                          ],
-                        );
-                      },
-                    ),
+                            itemCount: items.length,
+                            itemBuilder: (_, i) {
+                              final item = items[i];
+                              return MenuCard(
+                                item: item,
+                                onToggleAvailability: () async {
+                                  await _repo.setAvailability(item.menuId, !item.isAvailable);
+                                  _load();
+                                },
+                                // Recipe: ingredients taken from inventory per order.
+                                onRecipe: () => _openRecipe(item),
+                                onEdit: () => _editItem(item),
+                                onDelete: () => _deleteItem(item),
+                              );
+                            },
+                          ),
                   ),
           ),
         ],

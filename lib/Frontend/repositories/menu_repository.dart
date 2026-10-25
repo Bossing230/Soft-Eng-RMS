@@ -55,6 +55,27 @@ class MenuRepository {
     return MenuItem.fromJson(data);
   }
 
+  /// Updates a dish's details (not its recipe or availability, which have
+  /// their own calls). Expects the backend route `PUT /menu/:id`.
+  Future<void> update(
+    int menuId, {
+    required int categoryId,
+    required String foodName,
+    required String description,
+    required double price,
+    String? image,
+    String? station,
+  }) async {
+    await _api.put('/menu/$menuId', body: {
+      'categoryId': categoryId,
+      'foodName': foodName,
+      'description': description,
+      'price': price,
+      if (image != null) 'image': image,
+      if (station != null) 'station': station,
+    });
+  }
+
   Future<void> setAvailability(int menuId, bool available) {
     return _api.patch('/menu/$menuId/availability', body: {
       'availability': available ? 'available' : 'unavailable',
