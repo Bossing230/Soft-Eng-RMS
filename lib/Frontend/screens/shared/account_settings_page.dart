@@ -19,7 +19,7 @@ class _Ui {
   static const red = Color(0xFFE53935);
 }
 
-enum _Section { profile, password, settings, delete }
+enum _Section { profile, password, delete }
 
 _Section _sectionFrom(String name) {
   for (final s in _Section.values) {
@@ -44,15 +44,12 @@ String? _photoUrl(String? path) {
   return '$base$path';
 }
 
-/// Account Settings: profile details and photo, change password, a link to the
-/// Activity Log, and (for administrators and managers) the order rates.
-/// Opened from the profile menu inside the dashboard, so it has no Scaffold.
+/// Shows ONE account page at a time, picked from the profile dropdown:
+/// 'profile' (My Profile), 'password' (Change Password) or 'delete'
+/// (Delete Account). Opened inside the dashboard, so it has no Scaffold.
 class AccountSettingsPage extends StatefulWidget {
-  /// 'profile', 'password' or 'settings'.
+  /// 'profile', 'password' or 'delete'.
   final String initialSection;
-
-  /// Opens the Activity Log page (the dashboard owns that navigation).
-  final VoidCallback? onOpenActivityLog;
 
   /// Called after the name or photo changed, so the top bar can refresh.
   final VoidCallback? onProfileChanged;
@@ -60,7 +57,6 @@ class AccountSettingsPage extends StatefulWidget {
   const AccountSettingsPage({
     super.key,
     this.initialSection = 'profile',
-    this.onOpenActivityLog,
     this.onProfileChanged,
   });
 
@@ -71,7 +67,7 @@ class AccountSettingsPage extends StatefulWidget {
 class _AccountSettingsPageState extends State<AccountSettingsPage> {
   final _repo = AccountRepository();
 
-  late _Section _section;
+  late final _Section _section;
   AccountProfile? _profile;
   bool _loading = true;
   String? _loadError;
@@ -102,16 +98,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
   bool _deleting = false;
   String? _deleteError;
 
-  // settings
-  Map<String, dynamic>? _rates;
-  bool _ratesLoading = false;
-  String? _ratesError;
-
-  bool get _seesRates {
-    final role = SessionManager().role;
-    return role == AppConstants.roleAdmin || role == AppConstants.roleManager;
-  }
-
   bool get _dirty {
     final p = _profile;
     if (p == null) return false;
@@ -123,7 +109,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     super.initState();
     _section = _sectionFrom(widget.initialSection);
     _loadProfile();
-    if (_section == _Section.settings) _loadRates();
   }
 
   @override
@@ -172,33 +157,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
         _loading = false;
       });
     }
-  }
-
-  Future<void> _loadRates() async {
-    if (!_seesRates || _rates != null || _ratesLoading) return;
-    setState(() {
-      _ratesLoading = true;
-      _ratesError = null;
-    });
-    try {
-      final rates = await _repo.getOrderRates();
-      if (!mounted) return;
-      setState(() {
-        _rates = rates;
-        _ratesLoading = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _ratesError = '$e';
-        _ratesLoading = false;
-      });
-    }
-  }
-
-  void _select(_Section section) {
-    setState(() => _section = section);
-    if (section == _Section.settings) _loadRates();
   }
 
   // ---- profile actions ----
@@ -332,34 +290,15 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final wide = constraints.maxWidth >= 900;
-        final content = _contentCard();
-        final menu = _menuCard();
         return SingleChildScrollView(
           padding: EdgeInsets.all(wide ? 24 : 16),
           child: Center(
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 1200),
+              constraints: const BoxConstraints(maxWidth: 900),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Text('Account Settings', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w600, color: _Ui.ink)),
-                  const SizedBox(height: 2),
-                  const Text('Manage your profile and account preferences.', style: TextStyle(fontSize: 13, color: _Ui.muted)),
-                  const SizedBox(height: 18),
-                  if (wide)
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(child: content),
-                        const SizedBox(width: 16),
-                        SizedBox(width: 340, child: menu),
-                      ],
-                    )
-                  else ...[
-                    menu,
-                    const SizedBox(height: 16),
-                    content,
-                  ],
+                  _contentCard(),
                   const SizedBox(height: 16),
                   _quickInfo(_profile!),
                 ],
@@ -442,73 +381,7 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
     );
   }
 
-  // ---- right-hand menu ----
-
-  Widget _menuCard() {
-    final items = <Widget>[
-      _menuItem(Icons.person_outline, 'Profile', 'View and edit your profile information',
-          selected: _section == _Section.profile, onTap: () => _select(_Section.profile)),
-      _menuItem(Icons.lock_outline, 'Change Password', 'Update your account password',
-          selected: _section == _Section.password, onTap: () => _select(_Section.password)),
-      _menuItem(Icons.history, 'Activity Log', 'View your recent activities',
-          selected: false, onTap: widget.onOpenActivityLog),
-      _menuItem(Icons.settings_outlined, 'Account Settings', 'Manage your preferences and system settings',
-          selected: _section == _Section.settings, onTap: () => _select(_Section.settings)),
-      _menuItem(Icons.delete_outline, 'Delete Account', 'Permanently close your account',
-          selected: _section == _Section.delete, danger: true, onTap: () => _select(_Section.delete)),
-    ];
-    return _card(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        children: [
-          for (var i = 0; i < items.length; i++) ...[
-            items[i],
-            if (i < items.length - 1) const SizedBox(height: 6),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _menuItem(IconData icon, String title, String subtitle,
-      {required bool selected, required VoidCallback? onTap, bool danger = false}) {
-    final accent = danger ? _Ui.red : Theme.of(context).colorScheme.primary;
-    return Material(
-      color: selected ? accent.withOpacity(0.10) : Colors.transparent,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-          child: Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(color: accent.withOpacity(selected ? 0.18 : 0.08), borderRadius: BorderRadius.circular(10)),
-                child: Icon(icon, size: 19, color: accent),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        style: TextStyle(fontSize: 14, fontWeight: selected ? FontWeight.w600 : FontWeight.w500, color: danger ? _Ui.red : _Ui.ink)),
-                    Text(subtitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5, color: _Ui.muted)),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_right, size: 20, color: _Ui.muted),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ---- left-hand content ----
+  // ---- the page picked from the dropdown ----
 
   Widget _contentCard() {
     switch (_section) {
@@ -516,8 +389,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
         return _profileCard();
       case _Section.password:
         return _passwordCard();
-      case _Section.settings:
-        return _settingsCard();
       case _Section.delete:
         return _deleteCard();
     }
@@ -757,77 +628,6 @@ class _AccountSettingsPageState extends State<AccountSettingsPage> {
               ],
             ),
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _settingsCard() {
-    Widget body;
-    if (!_seesRates) {
-      body = const Padding(
-        padding: EdgeInsets.symmetric(vertical: 28),
-        child: Center(
-          child: Text('There are no preferences to change yet.', style: TextStyle(color: _Ui.muted)),
-        ),
-      );
-    } else if (_ratesLoading) {
-      body = const Padding(padding: EdgeInsets.symmetric(vertical: 28), child: Center(child: CircularProgressIndicator()));
-    } else if (_ratesError != null) {
-      body = Padding(
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        child: Row(
-          children: [
-            Expanded(child: Text("Couldn't load the order rates: $_ratesError", style: const TextStyle(color: _Ui.muted))),
-            TextButton(onPressed: _loadRates, child: const Text('Retry')),
-          ],
-        ),
-      );
-    } else if (_rates == null) {
-      body = const SizedBox.shrink();
-    } else {
-      String percent(dynamic v) {
-        final value = (double.tryParse('$v') ?? 0) * 100;
-        return '${value == value.roundToDouble() ? value.toStringAsFixed(0) : value.toStringAsFixed(1)}%';
-      }
-
-      body = Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Order rates', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.ink)),
-          const SizedBox(height: 4),
-          const Text(
-            'Added to every order at checkout. These are set in the server configuration.',
-            style: TextStyle(fontSize: 12, color: _Ui.muted),
-          ),
-          const SizedBox(height: 14),
-          _rateRow('Tax rate', percent(_rates!['taxRate'])),
-          const SizedBox(height: 8),
-          _rateRow('Service charge', percent(_rates!['serviceChargeRate'])),
-        ],
-      );
-    }
-
-    return _card(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _cardHeader(Icons.settings_outlined, 'Account Settings', 'Your preferences and system settings.'),
-          const SizedBox(height: 16),
-          body,
-        ],
-      ),
-    );
-  }
-
-  Widget _rateRow(String label, String value) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-      decoration: BoxDecoration(color: _Ui.disabledFill, borderRadius: BorderRadius.circular(10)),
-      child: Row(
-        children: [
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: _Ui.ink))),
-          Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: _Ui.ink)),
         ],
       ),
     );

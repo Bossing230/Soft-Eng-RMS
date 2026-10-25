@@ -64,11 +64,15 @@ class _RoleScaffoldState extends State<RoleScaffold> {
   List<NotificationItem> _notifications = [];
   Timer? _pollTimer;
 
-  /// A page opened from the account menu (the Activity Log). While it is set it
-  /// is shown in the main area instead of the selected tab; picking any tab in
-  /// the sidebar or bottom bar closes it.
+  /// A page opened from the account menu (My Profile, Change Password,
+  /// Activity Log or Delete Account). While it is set it is shown in the main
+  /// area instead of the selected tab; picking any tab in the sidebar or
+  /// bottom bar closes it.
   Widget? _overlayPage;
   String? _overlayTitle;
+
+  /// True while the avatar dropdown is showing, so its caret can point up.
+  bool _accountMenuOpen = false;
 
   @override
   void initState() {
@@ -117,21 +121,25 @@ class _RoleScaffoldState extends State<RoleScaffold> {
     });
   }
 
-  /// Opens Account Settings inside the dashboard. [section] is 'profile',
-  /// 'password' or 'settings'. The key makes the page start fresh on the
+  /// Opens one account page inside the dashboard. [section] is 'profile',
+  /// 'password' or 'delete'. The key makes the page start fresh on the
   /// requested section even if it is already open.
   void _openAccountSettings(String section) {
     setState(() {
       _overlayPage = AccountSettingsPage(
         key: ValueKey('account-$section'),
         initialSection: section,
-        onOpenActivityLog: _openActivityLog,
         // The name or photo changed: rebuild so the top bar shows it right away.
         onProfileChanged: () {
           if (mounted) setState(() {});
         },
       );
-      _overlayTitle = 'Account Settings';
+      _overlayTitle = const {
+            'profile': 'My Profile',
+            'password': 'Change Password',
+            'delete': 'Delete Account',
+          }[section] ??
+          'My Profile';
     });
   }
 
@@ -200,7 +208,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
             itemCount: widget.items.length,
             itemBuilder: (_, i) {
               final item = widget.items[i];
-              // No tab is highlighted while an account-menu page (Activity Log) is open.
+              // No tab is highlighted while an account-menu page is open.
               final selected = i == _selected && _overlayPage == null;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
@@ -290,7 +298,11 @@ class _RoleScaffoldState extends State<RoleScaffold> {
     return PopupMenuButton<String>(
       tooltip: 'Account',
       offset: const Offset(0, 48),
+      // The caret points up while the menu is open, down when it is closed.
+      onOpened: () => setState(() => _accountMenuOpen = true),
+      onCanceled: () => setState(() => _accountMenuOpen = false),
       onSelected: (value) {
+        setState(() => _accountMenuOpen = false);
         switch (value) {
           case 'profile':
             _openAccountSettings('profile');
@@ -300,9 +312,6 @@ class _RoleScaffoldState extends State<RoleScaffold> {
             break;
           case 'activity':
             _openActivityLog();
-            break;
-          case 'settings':
-            _openAccountSettings('profile');
             break;
           case 'delete':
             _openAccountSettings('delete');
@@ -351,7 +360,6 @@ class _RoleScaffoldState extends State<RoleScaffold> {
         const PopupMenuItem(value: 'profile', child: Row(children: [Icon(Icons.person_outline, size: 18), SizedBox(width: 12), Text('My Profile')])),
         const PopupMenuItem(value: 'password', child: Row(children: [Icon(Icons.lock_outline, size: 18), SizedBox(width: 12), Text('Change Password')])),
         const PopupMenuItem(value: 'activity', child: Row(children: [Icon(Icons.history, size: 18), SizedBox(width: 12), Text('Activity Log')])),
-        const PopupMenuItem(value: 'settings', child: Row(children: [Icon(Icons.settings_outlined, size: 18), SizedBox(width: 12), Text('Account Settings')])),
         const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_outline, size: 18, color: Colors.red), SizedBox(width: 12), Text('Delete Account', style: TextStyle(color: Colors.red))])),
         const PopupMenuDivider(),
         const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, size: 18, color: Colors.red), SizedBox(width: 12), Text('Logout', style: TextStyle(color: Colors.red))])),
@@ -367,7 +375,11 @@ class _RoleScaffoldState extends State<RoleScaffold> {
                 ? Text(_initials, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary))
                 : null,
           ),
-          const Icon(Icons.arrow_drop_down, size: 18),
+          AnimatedRotation(
+            turns: _accountMenuOpen ? 0.5 : 0, // 0.5 turn = caret flipped up
+            duration: const Duration(milliseconds: 200),
+            child: const Icon(Icons.arrow_drop_down, size: 18),
+          ),
         ],
       ),
     );
