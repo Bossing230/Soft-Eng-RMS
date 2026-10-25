@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:rms/Frontend/core/constants/app_constants.dart';
 import 'package:rms/Frontend/models/activity_log.dart';
 import 'package:rms/Frontend/patterns/singleton/session_manager.dart';
-import 'package:rms/Frontend/repositories/activity_log_repository.dart';
+import '../../core/constants/app_constants.dart';
+import '../../repositories/activity_log_repository.dart';
+
 // ---------------------------------------------------------------------------
 // Design tokens, shared with the Inventory page so the two match.
 // ---------------------------------------------------------------------------
@@ -36,6 +37,8 @@ _KindStyle _kindStyle(String kind) {
       return const _KindStyle('Logout', Icons.logout, Color(0xFFE53935));
     case 'password':
       return const _KindStyle('Password', Icons.lock_outline, Color(0xFF3F6FD8));
+    case 'account':
+      return const _KindStyle('Account', Icons.manage_accounts_outlined, Color(0xFF5C6BC0));
     case 'orders':
       return const _KindStyle('Orders', Icons.receipt_long_outlined, Color(0xFF3F6FD8));
     case 'menu':

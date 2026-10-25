@@ -6,6 +6,7 @@ import 'package:rms/Frontend/services/auth_services.dart';
 import '../../core/routes/app_router.dart';
 import '../../core/constants/app_constants.dart';
 import '../../repositories/notification_repository.dart';
+import 'account_settings_page.dart';
 import 'activity_log_page.dart';
 
 class RoleNavItem {
@@ -116,6 +117,24 @@ class _RoleScaffoldState extends State<RoleScaffold> {
     });
   }
 
+  /// Opens Account Settings inside the dashboard. [section] is 'profile',
+  /// 'password' or 'settings'. The key makes the page start fresh on the
+  /// requested section even if it is already open.
+  void _openAccountSettings(String section) {
+    setState(() {
+      _overlayPage = AccountSettingsPage(
+        key: ValueKey('account-$section'),
+        initialSection: section,
+        onOpenActivityLog: _openActivityLog,
+        // The name or photo changed: rebuild so the top bar shows it right away.
+        onProfileChanged: () {
+          if (mounted) setState(() {});
+        },
+      );
+      _overlayTitle = 'Account Settings';
+    });
+  }
+
   String get _initials {
     final name = SessionManager().name?.trim() ?? '';
     if (name.isEmpty) return SessionManager().username?.substring(0, 1).toUpperCase() ?? '?';
@@ -149,115 +168,6 @@ class _RoleScaffoldState extends State<RoleScaffold> {
       await AuthService().logout();
       if (mounted) AppRouter.goToLogin(context);
     }
-  }
-
-  void _showMyProfile() {
-    final session = SessionManager();
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) => DraggableScrollableSheet(
-        initialChildSize: 0.5,
-        minChildSize: 0.3,
-        maxChildSize: 0.8,
-        expand: false,
-        builder: (context, scrollController) => SingleChildScrollView(
-          controller: scrollController,
-          padding: const EdgeInsets.fromLTRB(24, 28, 24, 32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircleAvatar(
-                radius: 48,
-                backgroundImage: _fullPhotoUrl != null ? NetworkImage(_fullPhotoUrl!) : null,
-                child: _fullPhotoUrl == null ? Text(_initials, style: const TextStyle(fontSize: 28)) : null,
-              ),
-              const SizedBox(height: 16),
-              Text(session.name ?? '', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 4),
-              Text(session.email ?? '', style: TextStyle(color: Colors.grey[600])),
-              const SizedBox(height: 8),
-              Chip(label: Text(session.role ?? ''), visualDensity: VisualDensity.compact),
-              const SizedBox(height: 24),
-              const Divider(),
-              const SizedBox(height: 12),
-              ListTile(
-                leading: const Icon(Icons.alternate_email),
-                title: const Text('Username'),
-                trailing: Text(session.username ?? '', style: const TextStyle(fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _showChangePasswordDialog() async {
-    final currentCtrl = TextEditingController();
-    final newCtrl = TextEditingController();
-    bool submitting = false;
-    String? error;
-
-    await showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Change Password'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: currentCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'Current password')),
-              const SizedBox(height: 16),
-              TextField(controller: newCtrl, obscureText: true, decoration: const InputDecoration(labelText: 'New password')),
-              if (error != null) ...[
-                const SizedBox(height: 12),
-                Text(error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
-              ],
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: submitting ? null : () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: submitting
-                  ? null
-                  : () async {
-                      if (newCtrl.text.trim().length < 6) {
-                        setDialogState(() => error = 'New password must be at least 6 characters');
-                        return;
-                      }
-                      setDialogState(() {
-                        submitting = true;
-                        error = null;
-                      });
-                      try {
-                        await AuthService().changePassword(currentCtrl.text, newCtrl.text.trim());
-                        if (ctx.mounted) {
-                          Navigator.pop(ctx);
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Password changed successfully')));
-                        }
-                      } catch (e) {
-                        setDialogState(() {
-                          submitting = false;
-                          error = 'Failed: $e';
-                        });
-                      }
-                    },
-              child: submitting
-                  ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Update'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showNotBuiltYet(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$feature isn\'t built yet — let me know if you want it added.')),
-    );
   }
 
   Widget _sidebarContent({required bool isDrawer}) {
@@ -383,16 +293,16 @@ class _RoleScaffoldState extends State<RoleScaffold> {
       onSelected: (value) {
         switch (value) {
           case 'profile':
-            _showMyProfile();
+            _openAccountSettings('profile');
             break;
           case 'password':
-            _showChangePasswordDialog();
+            _openAccountSettings('password');
             break;
           case 'activity':
             _openActivityLog();
             break;
           case 'settings':
-            _showNotBuiltYet('Account Settings');
+            _openAccountSettings('profile');
             break;
           case 'logout':
             _confirmLogout();

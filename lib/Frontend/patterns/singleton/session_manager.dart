@@ -55,6 +55,17 @@ class SessionManager {
     if (profileImage != null) await prefs.setString('profileImage', profileImage);
   }
 
+  /// Updates the name and/or photo of the signed-in person after they edit their
+  /// profile, so the top bar shows the change straight away and after a restart.
+  Future<void> updateProfile({String? name, String? profileImage}) async {
+    if (name != null) this.name = name;
+    if (profileImage != null) this.profileImage = profileImage;
+
+    final prefs = await SharedPreferences.getInstance();
+    if (name != null) await prefs.setString('name', name);
+    if (profileImage != null) await prefs.setString('profileImage', profileImage);
+  }
+
   Future<void> clear() async {
     token = null;
     employeeId = null;
