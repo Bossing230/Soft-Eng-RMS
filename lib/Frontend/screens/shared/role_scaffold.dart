@@ -64,13 +64,6 @@ class _RoleScaffoldState extends State<RoleScaffold> {
   List<NotificationItem> _notifications = [];
   Timer? _pollTimer;
 
-  /// A page opened from the account menu (My Profile, Change Password,
-  /// Activity Log or Delete Account). While it is set it is shown in the main
-  /// area instead of the selected tab; picking any tab in the sidebar or
-  /// bottom bar closes it.
-  Widget? _overlayPage;
-  String? _overlayTitle;
-
   /// True while the avatar dropdown is showing, so its caret can point up.
   bool _accountMenuOpen = false;
 
@@ -100,47 +93,47 @@ class _RoleScaffoldState extends State<RoleScaffold> {
   /// summary tab uses "<Role> Dashboard"), otherwise its sidebar label —
   /// matching how every page design in this app labels its own top bar.
   String get _topTitle {
-    if (_overlayTitle != null) return _overlayTitle!;
     final item = widget.items[_selected];
     return item.pageTitle ?? item.label;
   }
 
-  /// Opens one of the sidebar / bottom-bar tabs and closes any account-menu page.
+  /// Opens one of the sidebar / bottom-bar tabs.
   void _selectTab(int index) {
-    setState(() {
-      _selected = index;
-      _overlayPage = null;
-      _overlayTitle = null;
-    });
+    setState(() => _selected = index);
   }
 
-  void _openActivityLog() {
-    setState(() {
-      _overlayPage = const ActivityLogPage();
-      _overlayTitle = 'Activity Log';
-    });
+  /// Opens an account-menu page as its own full screen (red top bar with a
+  /// back arrow, no sidebar), the same way the "New Menu Item" page opens.
+  void _openFullPage(String title, Widget page) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => Scaffold(
+          appBar: AppBar(title: Text(title)),
+          body: page,
+        ),
+      ),
+    );
   }
 
-  /// Opens one account page inside the dashboard. [section] is 'profile',
-  /// 'password' or 'delete'. The key makes the page start fresh on the
-  /// requested section even if it is already open.
+  void _openActivityLog() => _openFullPage('Activity Log', const ActivityLogPage());
+
+  /// [section] is 'profile', 'password' or 'delete'.
   void _openAccountSettings(String section) {
-    setState(() {
-      _overlayPage = AccountSettingsPage(
-        key: ValueKey('account-$section'),
+    const titles = {
+      'profile': 'My Profile',
+      'password': 'Change Password',
+      'delete': 'Delete Account',
+    };
+    _openFullPage(
+      titles[section] ?? 'My Profile',
+      AccountSettingsPage(
         initialSection: section,
-        // The name or photo changed: rebuild so the top bar shows it right away.
+        // The name or photo changed: rebuild so the dashboard top bar shows it.
         onProfileChanged: () {
           if (mounted) setState(() {});
         },
-      );
-      _overlayTitle = const {
-            'profile': 'My Profile',
-            'password': 'Change Password',
-            'delete': 'Delete Account',
-          }[section] ??
-          'My Profile';
-    });
+      ),
+    );
   }
 
   String get _initials {
@@ -208,8 +201,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
             itemCount: widget.items.length,
             itemBuilder: (_, i) {
               final item = widget.items[i];
-              // No tab is highlighted while an account-menu page is open.
-              final selected = i == _selected && _overlayPage == null;
+              final selected = i == _selected;
               return Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
                 child: ListTile(
@@ -413,7 +405,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
         final index = widget.items.indexWhere((i) => i.label == label);
         if (index != -1) _selectTab(index);
       },
-      child: _overlayPage ?? widget.items[_selected].page,
+      child: widget.items[_selected].page,
     );
 
     if (isWide) {
