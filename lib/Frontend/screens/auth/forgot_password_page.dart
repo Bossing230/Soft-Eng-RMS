@@ -1,9 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:rms/Frontend/services/api_services.dart';
 import 'package:rms/Frontend/services/auth_services.dart';
+import 'package:rms/Frontend/widgets/otp_boxes.dart';
 
 import '../../core/routes/app_router.dart';
 import '../../core/theme/app_theme.dart';
@@ -421,7 +421,7 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
         ),
         const SizedBox(height: 24),
         Center(
-          child: _OtpBoxes(
+          child: OtpBoxes(
             key: ValueKey(_codeBoxesGeneration),
             length: _codeLength,
             enabled: !_busy,
@@ -587,147 +587,6 @@ class _ForgotPasswordPageState extends State<ForgotPasswordPage> {
           onPressed: _goToDashboard,
           child: Text(_autoContinueSeconds > 0 ? 'Go to dashboard (${_autoContinueSeconds}s)' : 'Go to dashboard'),
         ),
-      ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Segmented digit-code input: one box per digit, auto-advancing, paste-aware.
-//
-// BUG FIX: the old version wrapped each TextField in a KeyboardListener that
-// used the SAME FocusNode as the TextField. That nests a node inside itself,
-// which creates a loop in Flutter's focus tree and freezes the page
-// ("Page Unresponsive"). Backspace handling now lives on the node itself
-// (FocusNode.onKeyEvent), so there is exactly one Focus widget per node.
-// ---------------------------------------------------------------------------
-
-class _OtpBoxes extends StatefulWidget {
-  final int length;
-  final bool enabled;
-  final bool hasError;
-  final ValueChanged<String> onChanged;
-  final ValueChanged<String> onCompleted;
-  const _OtpBoxes({
-    super.key,
-    required this.length,
-    required this.enabled,
-    required this.hasError,
-    required this.onChanged,
-    required this.onCompleted,
-  });
-
-  @override
-  State<_OtpBoxes> createState() => _OtpBoxesState();
-}
-
-class _OtpBoxesState extends State<_OtpBoxes> {
-  late final List<TextEditingController> _controllers = List.generate(widget.length, (_) => TextEditingController());
-  late final List<FocusNode> _focusNodes = List.generate(
-    widget.length,
-    (i) => FocusNode(
-      onKeyEvent: (node, event) {
-        if (event is KeyDownEvent && event.logicalKey == LogicalKeyboardKey.backspace) {
-          _onBackspace(i);
-        }
-        return KeyEventResult.ignored;
-      },
-    ),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    // Select the digit when a box gets focus so typing replaces it.
-    for (var i = 0; i < widget.length; i++) {
-      _focusNodes[i].addListener(() {
-        if (_focusNodes[i].hasFocus) {
-          final c = _controllers[i];
-          c.selection = TextSelection(baseOffset: 0, extentOffset: c.text.length);
-        }
-      });
-    }
-  }
-
-  @override
-  void dispose() {
-    for (final c in _controllers) {
-      c.dispose();
-    }
-    for (final f in _focusNodes) {
-      f.dispose();
-    }
-    super.dispose();
-  }
-
-  String get _value => _controllers.map((c) => c.text).join();
-
-  void _onChanged(int index, String value) {
-    if (value.length > 1) {
-      // Paste or autofill dropped several digits into one box: spread them out.
-      final digits = value.replaceAll(RegExp(r'\D'), '');
-      for (var i = 0; i < widget.length; i++) {
-        _controllers[i].text = i < digits.length ? digits[i] : '';
-      }
-      final lastFilled = (digits.length - 1).clamp(0, widget.length - 1);
-      _focusNodes[lastFilled].requestFocus();
-    } else if (value.isNotEmpty && index < widget.length - 1) {
-      _focusNodes[index + 1].requestFocus();
-    }
-
-    widget.onChanged(_value);
-    if (_value.length == widget.length) {
-      widget.onCompleted(_value);
-    }
-  }
-
-  void _onBackspace(int index) {
-    if (_controllers[index].text.isEmpty && index > 0) {
-      _focusNodes[index - 1].requestFocus();
-      _controllers[index - 1].clear();
-      widget.onChanged(_value);
-    }
-  }
-
-  OutlineInputBorder _border(Color color, double width) =>
-      OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: color, width: width));
-
-  @override
-  Widget build(BuildContext context) {
-    final errorColor = Theme.of(context).colorScheme.error;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        for (var i = 0; i < widget.length; i++) ...[
-          if (i > 0) const SizedBox(width: 8),
-          SizedBox(
-            width: 44,
-            height: 54,
-            child: TextField(
-              controller: _controllers[i],
-              focusNode: _focusNodes[i],
-              enabled: widget.enabled,
-              autofocus: i == 0,
-              textAlign: TextAlign.center,
-              keyboardType: TextInputType.number,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(widget.length), // lets a full code be pasted into one box
-              ],
-              decoration: InputDecoration(
-                counterText: '',
-                contentPadding: EdgeInsets.zero,
-                filled: true,
-                fillColor: AppTheme.background,
-                enabledBorder: _border(widget.hasError ? errorColor : Colors.black26, 1.2),
-                disabledBorder: _border(Colors.black12, 1.2),
-                focusedBorder: _border(widget.hasError ? errorColor : AppTheme.primary, 2),
-              ),
-              onChanged: (v) => _onChanged(i, v),
-            ),
-          ),
-        ],
       ],
     );
   }
