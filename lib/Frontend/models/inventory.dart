@@ -28,6 +28,20 @@ class InventoryItem {
   /// Null if the item has no photo.
   final String? image;
 
+  /// The item's own low-stock line, or null if it uses the default (30% of
+  /// max stock). [minimumStock] is always the line that actually applies.
+  final double? reorderLevel;
+
+  final String? supplierName;
+  final String? supplierPhone;
+
+  /// Where it is kept, such as "Freezer".
+  final String? storageLocation;
+  final String? notes;
+
+  /// Archived items are hidden from the normal list but can be restored.
+  final bool isArchived;
+
   InventoryItem({
     required this.inventoryId,
     required this.ingredientName,
@@ -42,9 +56,20 @@ class InventoryItem {
     this.unitCost = 0,
     this.lastUpdated,
     this.image,
+    this.reorderLevel,
+    this.supplierName,
+    this.supplierPhone,
+    this.storageLocation,
+    this.notes,
+    this.isArchived = false,
   });
 
   factory InventoryItem.fromJson(Map<String, dynamic> json) {
+    String? clean(dynamic v) {
+      final s = v?.toString().trim();
+      return (s == null || s.isEmpty) ? null : s;
+    }
+
     final rawImage = json['image']?.toString();
     return InventoryItem(
       inventoryId: int.parse(json['inventory_id'].toString()),
@@ -60,6 +85,12 @@ class InventoryItem {
       unitCost: double.tryParse('${json['unit_cost'] ?? 0}') ?? 0,
       lastUpdated: json['updated_at']?.toString(),
       image: (rawImage == null || rawImage.isEmpty) ? null : rawImage,
+      reorderLevel: json['reorder_level'] == null ? null : double.tryParse('${json['reorder_level']}'),
+      supplierName: clean(json['supplier_name']),
+      supplierPhone: clean(json['supplier_phone']),
+      storageLocation: clean(json['storage_location']),
+      notes: clean(json['notes']),
+      isArchived: json['is_archived'] == true || '${json['is_archived']}' == '1',
     );
   }
 
@@ -68,6 +99,9 @@ class InventoryItem {
   bool get isCritical => severity == 'critical';
 
   bool get hasImage => image != null && image!.isNotEmpty;
+
+  /// True when this item has its own reorder level instead of the default.
+  bool get hasCustomReorder => reorderLevel != null;
 
   /// Low, critical, or out of stock.
   bool get needsRestock => status != 'ok';
@@ -107,6 +141,7 @@ class InventoryTransaction {
   final String employeeName;
   final String time; // restaurant-local, 'YYYY-MM-DD HH:MM:SS'
   final int? orderId; // set when an order caused this change
+  final String reason; // why stock was written off ('waste' records), else ''
 
   InventoryTransaction({
     required this.type,
@@ -114,6 +149,7 @@ class InventoryTransaction {
     required this.employeeName,
     required this.time,
     this.orderId,
+    this.reason = '',
   });
 
   factory InventoryTransaction.fromJson(Map<String, dynamic> json) {
@@ -123,6 +159,7 @@ class InventoryTransaction {
       employeeName: (json['employee_name'] ?? '').toString(),
       time: (json['local_time'] ?? json['transaction_date'] ?? '').toString(),
       orderId: int.tryParse('${json['order_id'] ?? ''}'),
+      reason: (json['reason'] ?? '').toString(),
     );
   }
 }
@@ -135,6 +172,7 @@ class InventoryActivity {
   final String ingredientName;
   final String time;
   final int? orderId;
+  final String reason; // why stock was written off ('waste' records), else ''
 
   InventoryActivity({
     required this.type,
@@ -142,6 +180,7 @@ class InventoryActivity {
     required this.ingredientName,
     required this.time,
     this.orderId,
+    this.reason = '',
   });
 
   factory InventoryActivity.fromJson(Map<String, dynamic> json) {
@@ -151,6 +190,7 @@ class InventoryActivity {
       ingredientName: (json['ingredient_name'] ?? '').toString(),
       time: (json['local_time'] ?? '').toString(),
       orderId: int.tryParse('${json['order_id'] ?? ''}'),
+      reason: (json['reason'] ?? '').toString(),
     );
   }
 }
@@ -182,6 +222,9 @@ class InventoryOverview {
   final InventoryItem? actionNeeded;
   final List<InventoryActivity> recentActivity;
 
+  /// How many items are archived (not counted in anything above).
+  final int archivedCount;
+
   InventoryOverview({
     required this.categories,
     required this.totalItems,
@@ -194,6 +237,7 @@ class InventoryOverview {
     required this.pricedCount,
     required this.actionNeeded,
     required this.recentActivity,
+    this.archivedCount = 0,
   });
 
   factory InventoryOverview.fromJson(Map<String, dynamic> json) {
@@ -215,6 +259,7 @@ class InventoryOverview {
       recentActivity: ((json['recentActivity'] as List?) ?? [])
           .map((e) => InventoryActivity.fromJson(Map<String, dynamic>.from(e)))
           .toList(),
+      archivedCount: asNum(json['archivedCount']).toInt(),
     );
   }
 }

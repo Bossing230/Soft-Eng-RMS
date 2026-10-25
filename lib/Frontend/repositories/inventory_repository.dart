@@ -6,8 +6,12 @@ import 'package:rms/Frontend/services/file_download.dart';
 class InventoryRepository {
   final ApiService _api = ApiService();
 
-  Future<List<InventoryItem>> getAll({String? status}) async {
-    final data = await _api.get('/inventory', query: {if (status != null) 'status': status});
+  /// Active items by default; pass [archived] = true to list the archived ones.
+  Future<List<InventoryItem>> getAll({String? status, bool archived = false}) async {
+    final data = await _api.get('/inventory', query: {
+      if (status != null) 'status': status,
+      if (archived) 'archived': '1',
+    });
     return (data as List).map((e) => InventoryItem.fromJson(e)).toList();
   }
 
@@ -43,6 +47,11 @@ class InventoryRepository {
     String? expiryDate,
     double? unitCost,
     String? image,
+    double? reorderLevel,
+    String? supplierName,
+    String? supplierPhone,
+    String? storageLocation,
+    String? notes,
   }) async {
     final data = await _api.post('/inventory', body: {
       'ingredientName': ingredientName,
@@ -54,12 +63,19 @@ class InventoryRepository {
       if (expiryDate != null) 'expiryDate': expiryDate,
       if (unitCost != null) 'unitCost': unitCost,
       if (image != null && image.isNotEmpty) 'image': image,
+      if (reorderLevel != null) 'reorderLevel': reorderLevel,
+      if (supplierName != null && supplierName.isNotEmpty) 'supplierName': supplierName,
+      if (supplierPhone != null && supplierPhone.isNotEmpty) 'supplierPhone': supplierPhone,
+      if (storageLocation != null && storageLocation.isNotEmpty) 'storageLocation': storageLocation,
+      if (notes != null && notes.isNotEmpty) 'notes': notes,
     });
     return InventoryItem.fromJson(data);
   }
 
-  /// Edits name, unit, category, max stock, expiry date, unit cost and photo.
-  /// Use [adjustStock] to change the quantity. Pass an empty string for
+  /// Edits name, unit, category, max stock, reorder level, expiry date, unit
+  /// cost, photo, supplier, storage location and notes. A null [reorderLevel]
+  /// goes back to the default (30% of max stock); empty text clears the
+  /// supplier / location / notes. Use [adjustStock] to change the quantity. Pass an empty string for
   /// [expiryDate] to clear a previously set date. For [image]: leave it null
   /// to keep the current photo, pass a link to replace it, or pass an empty
   /// string to remove it.
@@ -72,6 +88,11 @@ class InventoryRepository {
     String? expiryDate,
     double? unitCost,
     String? image,
+    double? reorderLevel,
+    String supplierName = '',
+    String supplierPhone = '',
+    String storageLocation = '',
+    String notes = '',
   }) async {
     final data = await _api.put('/inventory/$inventoryId', body: {
       'ingredientName': ingredientName,
@@ -81,6 +102,11 @@ class InventoryRepository {
       'expiryDate': (expiryDate == null || expiryDate.isEmpty) ? null : expiryDate,
       if (unitCost != null) 'unitCost': unitCost,
       if (image != null) 'image': image,
+      'reorderLevel': reorderLevel,
+      'supplierName': supplierName,
+      'supplierPhone': supplierPhone,
+      'storageLocation': storageLocation,
+      'notes': notes,
     });
     return InventoryItem.fromJson(data);
   }
@@ -91,10 +117,21 @@ class InventoryRepository {
     return InventoryItem.fromJson(data);
   }
 
-  /// [type] is 'delivery' (+), 'usage' (-) or 'adjustment' (signed correction).
-  /// Returns the item as it is after the change.
-  Future<InventoryItem> adjustStock(int inventoryId, double quantity, String type) async {
-    final data = await _api.post('/inventory/$inventoryId/adjust', body: {'quantity': quantity, 'type': type});
+  /// [type] is 'delivery' (+), 'usage' (-), 'waste' (-, needs a [reason]) or
+  /// 'adjustment' (signed correction). Returns the item as it is after the change.
+  Future<InventoryItem> adjustStock(int inventoryId, double quantity, String type, {String? reason}) async {
+    final data = await _api.post('/inventory/$inventoryId/adjust', body: {
+      'quantity': quantity,
+      'type': type,
+      if (reason != null) 'reason': reason,
+    });
+    return InventoryItem.fromJson(data);
+  }
+
+  /// Archives an item (hides it everywhere, keeps its history) or restores it.
+  /// The server refuses to archive an item that is still part of a recipe.
+  Future<InventoryItem> setArchived(int inventoryId, bool archived) async {
+    final data = await _api.put('/inventory/$inventoryId/archive', body: {'archived': archived});
     return InventoryItem.fromJson(data);
   }
 

@@ -280,7 +280,9 @@ class _CreateEmployeeDialog extends StatefulWidget {
 }
 
 class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
-  final _nameCtrl = TextEditingController();
+  final _firstCtrl = TextEditingController();
+  final _middleCtrl = TextEditingController();
+  final _lastCtrl = TextEditingController();
   final _usernameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
@@ -289,6 +291,7 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
   XFile? _pickedPhoto;
   Uint8List? _previewBytes;
   bool _submitting = false;
+  bool _obscurePassword = true;
 
   _EmailStage _stage = _EmailStage.editing;
   bool _emailBusy = false;
@@ -304,7 +307,9 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
   @override
   void dispose() {
     _timer?.cancel();
-    _nameCtrl.dispose();
+    _firstCtrl.dispose();
+    _middleCtrl.dispose();
+    _lastCtrl.dispose();
     _usernameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
@@ -435,8 +440,12 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
   }
 
   Future<void> _create() async {
-    if (_nameCtrl.text.trim().isEmpty || _usernameCtrl.text.trim().isEmpty || _passwordCtrl.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Name, username, and password are required')));
+    if (_firstCtrl.text.trim().isEmpty ||
+        _lastCtrl.text.trim().isEmpty ||
+        _usernameCtrl.text.trim().isEmpty ||
+        _passwordCtrl.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('First name, last name, username, and password are required')));
       return;
     }
     if (_stage != _EmailStage.verified) {
@@ -449,8 +458,13 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
       if (_previewBytes != null && _pickedPhoto != null) {
         photoUrl = await widget.repo.uploadPhoto(bytes: _previewBytes!, filename: _pickedPhoto!.name);
       }
+      // The database stores one name, so the three parts are joined: "First Middle Last".
+      final fullName = [_firstCtrl.text, _middleCtrl.text, _lastCtrl.text]
+          .map((p) => p.trim())
+          .where((p) => p.isNotEmpty)
+          .join(' ');
       await widget.repo.create(
-        name: _nameCtrl.text.trim(),
+        name: fullName,
         username: _usernameCtrl.text.trim(),
         email: _verifiedEmail,
         emailToken: _emailToken,
@@ -524,11 +538,11 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
             suffixIcon: verified ? const Icon(Icons.verified, color: Colors.green) : null,
           ),
         ),
-        if (_stage == _EmailStage.editing && emailValid)
+        if (_stage == _EmailStage.editing)
           Padding(
             padding: const EdgeInsets.only(top: 8),
             child: OutlinedButton(
-              onPressed: _emailBusy ? null : _sendCode,
+              onPressed: (_emailBusy || !emailValid) ? null : _sendCode,
               child: _emailBusy
                   ? const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -616,6 +630,7 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              const SizedBox(height: 8),
               Center(
                 child: GestureDetector(
                   onTap: _submitting ? null : _pickPhoto,
@@ -645,7 +660,23 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
                 ),
               ),
               const SizedBox(height: 24),
-              TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Full name', prefixIcon: Icon(Icons.badge_outlined))),
+              TextField(
+                controller: _firstCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'First name', prefixIcon: Icon(Icons.badge_outlined)),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _middleCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Middle name (optional)', prefixIcon: Icon(Icons.badge_outlined)),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _lastCtrl,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Last name', prefixIcon: Icon(Icons.badge_outlined)),
+              ),
               const SizedBox(height: 16),
               TextField(controller: _usernameCtrl, decoration: const InputDecoration(labelText: 'Username', prefixIcon: Icon(Icons.alternate_email))),
               const SizedBox(height: 16),
@@ -653,8 +684,16 @@ class _CreateEmployeeDialogState extends State<_CreateEmployeeDialog> {
               const SizedBox(height: 16),
               TextField(
                 controller: _passwordCtrl,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Temporary password', prefixIcon: Icon(Icons.lock_outline)),
+                obscureText: _obscurePassword,
+                decoration: InputDecoration(
+                  labelText: 'Temporary password',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    tooltip: _obscurePassword ? 'Show password' : 'Hide password',
+                    icon: Icon(_obscurePassword ? Icons.visibility : Icons.visibility_off),
+                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  ),
+                ),
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(

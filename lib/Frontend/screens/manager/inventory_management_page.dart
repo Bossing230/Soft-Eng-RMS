@@ -47,6 +47,13 @@ const _categories = [
   'Other',
 ];
 
+/// Where an item is kept. "Not set" in the form clears it.
+const _locations = ['Freezer', 'Chiller', 'Dry store', 'Kitchen line', 'Bar', 'Other'];
+const _noLocation = 'Not set';
+
+/// Must match WASTE_REASONS in the backend inventoryController.js.
+const _wasteReasons = ['Expired', 'Spoiled', 'Spilled or damaged', 'Returned to supplier', 'Other'];
+
 final _categoryIcons = {
   'meat': Icons.kebab_dining_outlined,
   'seafood': Icons.set_meal_outlined,
@@ -203,6 +210,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   String _query = '';
   int _page = 0;
   bool _downloadingReport = false;
+  bool _showArchived = false; // false = the normal list, true = archived items
 
   @override
   void initState() {
@@ -224,7 +232,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
       });
     }
     try {
-      final results = await Future.wait([_repo.getAll(), _repo.getOverview()]);
+      final results = await Future.wait([_repo.getAll(archived: _showArchived), _repo.getOverview()]);
       if (!mounted) return;
       setState(() {
         _items = results[0] as List<InventoryItem>;
@@ -251,7 +259,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   List<InventoryItem> get _filtered {
     final q = _query.trim().toLowerCase();
     final list = _items.where((i) {
-      if (_categoryFilter != 'All') {
+      if (!_showArchived && _categoryFilter != 'All') {
         final category = i.category.isEmpty ? 'Uncategorized' : i.category;
         if (category != _categoryFilter) return false;
       }
@@ -319,6 +327,67 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
     }
   }
 
+  /// Switches between the normal list and the archived items.
+  void _toggleArchived() {
+    setState(() {
+      _showArchived = !_showArchived;
+      _page = 0;
+      _query = '';
+      _categoryFilter = 'All';
+      _searchController.clear();
+    });
+    _load();
+  }
+
+  Future<void> _archiveItem(InventoryItem item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _Ui.dialogBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Archive ${item.ingredientName}?', style: const TextStyle(fontSize: 18)),
+        content: const Text(
+          'It will disappear from the inventory list, stock alerts, totals and reports. '
+          'Its history is kept, and you can restore it any time from the Archived list.',
+          style: TextStyle(fontSize: 13.5, color: _Ui.muted),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: _Ui.tanDeep, foregroundColor: Colors.white),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Archive'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    try {
+      await _repo.setArchived(item.inventoryId, true);
+      await _load(showSpinner: false);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${item.ingredientName} archived.'),
+          action: SnackBarAction(label: 'Undo', onPressed: () => _restoreItem(item, quiet: true)),
+        ),
+      );
+    } catch (e) {
+      _snack('$e');
+    }
+  }
+
+  Future<void> _restoreItem(InventoryItem item, {bool quiet = false}) async {
+    try {
+      await _repo.setArchived(item.inventoryId, false);
+      await _load(showSpinner: false);
+      if (!quiet) _snack('${item.ingredientName} restored.');
+    } catch (e) {
+      _snack('$e');
+    }
+  }
+
   Future<void> _openDetail(InventoryItem item) {
     return showDialog<void>(
       context: context,
@@ -356,6 +425,10 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
 
   Future<void> _downloadReport() async {
     if (_downloadingReport) return;
+    if (_showArchived) {
+      _snack('The report covers active items. Go back to the inventory to download it.');
+      return;
+    }
 
     final choice = await showDialog<_ReportChoice>(
       context: context,
@@ -441,7 +514,22 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Inventory Items', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _Ui.ink)),
+          Row(
+            children: [
+              Text(
+                _showArchived ? 'Archived items' : 'Inventory Items',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _Ui.ink),
+              ),
+              const Spacer(),
+              if (_showArchived || (overview?.archivedCount ?? 0) > 0)
+                TextButton.icon(
+                  onPressed: _toggleArchived,
+                  icon: Icon(_showArchived ? Icons.arrow_back : Icons.archive_outlined, size: 16),
+                  label: Text(_showArchived ? 'Back to inventory' : 'Archived (${overview?.archivedCount ?? 0})'),
+                  style: TextButton.styleFrom(foregroundColor: _Ui.tanDeep),
+                ),
+            ],
+          ),
           const SizedBox(height: 12),
           TextField(
             controller: _searchController,
@@ -461,7 +549,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
             ),
           ),
           const SizedBox(height: 12),
-          if (overview != null)
+          if (overview != null && !_showArchived)
             _CategoryPills(
               totalItems: overview.totalItems,
               categories: overview.categories,
@@ -470,7 +558,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
             ),
           const SizedBox(height: 14),
           if (filtered.isEmpty)
-            _EmptyState(hasItems: _items.isNotEmpty)
+            _EmptyState(hasItems: _items.isNotEmpty, archived: _showArchived)
           else ...[
             _ItemsTableHeader(),
             for (final item in pageItems)
@@ -479,7 +567,9 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
                 onTap: () => _openDetail(item),
                 onEdit: () => _editItem(item),
                 onChangePhoto: () => _changePhoto(item),
-                onAddDelivery: item.needsRestock ? () => _quickDelivery(item) : null,
+                onAddDelivery: !_showArchived && item.needsRestock ? () => _quickDelivery(item) : null,
+                onArchive: () => _archiveItem(item),
+                onRestore: _showArchived ? () => _restoreItem(item) : null,
               ),
             const SizedBox(height: 10),
             _Pagination(
@@ -772,7 +862,7 @@ class _StatCardsRow extends StatelessWidget {
         color: _Ui.redText,
         value: '${overview.lowCount + overview.criticalCount}',
         label: 'Low Stock',
-        sublabel: 'Below 30% of max stock',
+        sublabel: 'At or below the reorder level',
       ),
       _StatCard(
         icon: Icons.schedule,
@@ -932,12 +1022,18 @@ class _ItemRow extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onChangePhoto;
   final VoidCallback? onAddDelivery;
+  final VoidCallback onArchive;
+
+  /// Set only when the row is in the Archived list: the only action is then "Restore".
+  final VoidCallback? onRestore;
   const _ItemRow({
     required this.item,
     required this.onTap,
     required this.onEdit,
     required this.onChangePhoto,
     required this.onAddDelivery,
+    required this.onArchive,
+    required this.onRestore,
   });
 
   @override
@@ -963,19 +1059,24 @@ class _ItemRow extends StatelessWidget {
         if (v == 'edit') onEdit();
         if (v == 'photo') onChangePhoto();
         if (v == 'delivery' && onAddDelivery != null) onAddDelivery!();
+        if (v == 'archive') onArchive();
+        if (v == 'restore' && onRestore != null) onRestore!();
       },
-      itemBuilder: (_) => [
-        const PopupMenuItem(value: 'open', child: Text('View details')),
-        const PopupMenuItem(value: 'edit', child: Text('Edit item')),
-        PopupMenuItem(value: 'photo', child: Text(item.hasImage ? 'Change photo' : 'Add photo')),
-        if (onAddDelivery != null) const PopupMenuItem(value: 'delivery', child: Text('Add delivery')),
-      ],
+      itemBuilder: (_) => onRestore != null
+          ? const [PopupMenuItem(value: 'restore', child: Text('Restore'))]
+          : [
+              const PopupMenuItem(value: 'open', child: Text('View details')),
+              const PopupMenuItem(value: 'edit', child: Text('Edit item')),
+              PopupMenuItem(value: 'photo', child: Text(item.hasImage ? 'Change photo' : 'Add photo')),
+              if (onAddDelivery != null) const PopupMenuItem(value: 'delivery', child: Text('Add delivery')),
+              const PopupMenuItem(value: 'archive', child: Text('Archive')),
+            ],
     );
 
     return Material(
       color: Colors.white,
       child: InkWell(
-        onTap: onTap,
+        onTap: onRestore != null ? null : onTap,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
@@ -993,7 +1094,12 @@ class _ItemRow extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(item.ingredientName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500, color: _Ui.ink)),
-                          Text(item.unit, style: const TextStyle(fontSize: 11, color: _Ui.muted)),
+                          Text(
+                            item.storageLocation == null ? item.unit : '${item.unit} · ${item.storageLocation}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 11, color: _Ui.muted),
+                          ),
                         ],
                       ),
                     ),
@@ -1186,10 +1292,12 @@ class _ActivityRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isIn = entry.quantity >= 0;
-    final color = entry.type == 'usage' ? _Ui.redText : (isIn ? _Ui.greenText : _Ui.amberText);
+    final color = (entry.type == 'usage' || entry.type == 'waste') ? _Ui.redText : (isIn ? _Ui.greenText : _Ui.amberText);
     final verb = entry.type == 'delivery'
         ? 'added to inventory'
-        : entry.type == 'usage'
+        : entry.type == 'waste'
+            ? (entry.reason.isEmpty ? 'written off as waste' : 'wasted (${entry.reason.toLowerCase()})')
+            : entry.type == 'usage'
             ? (entry.orderId != null ? 'used for order #${entry.orderId}' : 'used from inventory')
             : entry.type == 'return'
                 ? (entry.orderId != null ? 'returned from order #${entry.orderId}' : 'returned to inventory')
@@ -1308,7 +1416,8 @@ class _SidebarCard extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   final bool hasItems;
-  const _EmptyState({required this.hasItems});
+  final bool archived;
+  const _EmptyState({required this.hasItems, this.archived = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1316,7 +1425,9 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 48),
       child: Center(
         child: Text(
-          hasItems ? 'No items match your search or filter.' : 'No inventory items yet. Tap "Add Item" to start.',
+          archived
+              ? (hasItems ? 'No archived items match your search.' : 'Nothing is archived.')
+              : (hasItems ? 'No items match your search or filter.' : 'No inventory items yet. Tap "Add Item" to start.'),
           style: const TextStyle(color: _Ui.muted),
         ),
       ),
@@ -1459,6 +1570,98 @@ class _QuantityDialogState extends State<_QuantityDialog> {
 }
 
 // ---------------------------------------------------------------------------
+// Record waste (quantity + reason)
+// ---------------------------------------------------------------------------
+
+class _WasteEntry {
+  final double quantity;
+  final String reason;
+  const _WasteEntry(this.quantity, this.reason);
+}
+
+class _WasteDialog extends StatefulWidget {
+  final String unit;
+  final double inStock;
+  const _WasteDialog({required this.unit, required this.inStock});
+
+  @override
+  State<_WasteDialog> createState() => _WasteDialogState();
+}
+
+class _WasteDialogState extends State<_WasteDialog> {
+  final _controller = TextEditingController();
+  String _reason = _wasteReasons.first;
+  String? _error;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final value = double.tryParse(_controller.text.trim());
+    if (value == null || value <= 0) {
+      setState(() => _error = 'Enter a number greater than zero');
+      return;
+    }
+    if (value > widget.inStock) {
+      setState(() => _error = 'Only ${_fmtQty(widget.inStock)} ${widget.unit} in stock');
+      return;
+    }
+    Navigator.of(context).pop(_WasteEntry(_round2(value), _reason));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: _Ui.dialogBg,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      title: const Text('Record waste', style: TextStyle(fontSize: 18)),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'In stock: ${_fmtQty(widget.inStock)} ${widget.unit}. This removes the amount from stock and keeps the reason in the history.',
+              style: const TextStyle(fontSize: 13, color: _Ui.muted),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onSubmitted: (_) => _submit(),
+              decoration: _fieldDecoration(hint: 'Quantity (${widget.unit})', error: _error),
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: _reason,
+              isExpanded: true,
+              decoration: _fieldDecoration(),
+              items: _wasteReasons.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
+              onChanged: (v) {
+                if (v != null) setState(() => _reason = v);
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(backgroundColor: _Ui.tanDeep, foregroundColor: Colors.white),
+          onPressed: _submit,
+          child: const Text('Record waste'),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Add / edit item form (a full page, see _openAddItem for why)
 // ---------------------------------------------------------------------------
 
@@ -1480,6 +1683,13 @@ class _ItemFormPageState extends State<_ItemFormPage> {
   late final TextEditingController _cost = TextEditingController(
     text: (widget.existing != null && widget.existing!.unitCost > 0) ? _plain(widget.existing!.unitCost) : '',
   );
+  late final TextEditingController _reorder = TextEditingController(
+    text: widget.existing?.reorderLevel != null ? _plain(widget.existing!.reorderLevel!) : '',
+  );
+  late final TextEditingController _supplier = TextEditingController(text: widget.existing?.supplierName ?? '');
+  late final TextEditingController _phone = TextEditingController(text: widget.existing?.supplierPhone ?? '');
+  late final TextEditingController _notes = TextEditingController(text: widget.existing?.notes ?? '');
+  String? _location;
   String? _unit;
   String? _category;
   DateTime? _expiryDate;
@@ -1495,6 +1705,8 @@ class _ItemFormPageState extends State<_ItemFormPage> {
   String? _unitError;
   String? _categoryError;
   String? _costError;
+  String? _reorderError;
+  String? _phoneError;
   String? _error;
   bool _saving = false;
 
@@ -1504,6 +1716,7 @@ class _ItemFormPageState extends State<_ItemFormPage> {
   void initState() {
     super.initState();
     _unit = widget.existing?.unit;
+    _location = widget.existing?.storageLocation;
     final category = widget.existing?.category ?? '';
     _category = category.isEmpty ? null : category;
     final expiry = widget.existing?.expiryDate;
@@ -1516,6 +1729,10 @@ class _ItemFormPageState extends State<_ItemFormPage> {
     _current.dispose();
     _max.dispose();
     _cost.dispose();
+    _reorder.dispose();
+    _supplier.dispose();
+    _phone.dispose();
+    _notes.dispose();
     super.dispose();
   }
 
@@ -1558,6 +1775,9 @@ class _ItemFormPageState extends State<_ItemFormPage> {
     final current = _editing ? null : double.tryParse(_current.text.trim());
     final costText = _cost.text.trim();
     final cost = costText.isEmpty ? 0.0 : double.tryParse(costText);
+    final reorderText = _reorder.text.trim();
+    final reorder = reorderText.isEmpty ? null : double.tryParse(reorderText);
+    final phone = _phone.text.trim();
 
     String? nameError;
     String? currentError;
@@ -1565,6 +1785,8 @@ class _ItemFormPageState extends State<_ItemFormPage> {
     String? unitError;
     String? categoryError;
     String? costError;
+    String? reorderError;
+    String? phoneError;
 
     if (name.isEmpty) nameError = 'Enter the item name';
     if (max == null || max <= 0) maxError = 'Enter a max stock above zero';
@@ -1578,6 +1800,16 @@ class _ItemFormPageState extends State<_ItemFormPage> {
     if (_unit == null) unitError = 'Choose a unit';
     if (!_editing && _category == null) categoryError = 'Choose a category';
     if (costText.isNotEmpty && (cost == null || cost < 0)) costError = 'Enter a cost of zero or more';
+    if (reorderText.isNotEmpty) {
+      if (reorder == null || reorder <= 0) {
+        reorderError = 'Enter a number above zero';
+      } else if (max != null && max > 0 && reorder > max) {
+        reorderError = "Can't be more than max stock";
+      }
+    }
+    if (phone.isNotEmpty && !RegExp(r'^[0-9+()\-\s]+$').hasMatch(phone)) {
+      phoneError = 'Use digits, spaces and + ( ) -';
+    }
 
     setState(() {
       _nameError = nameError;
@@ -1586,9 +1818,13 @@ class _ItemFormPageState extends State<_ItemFormPage> {
       _unitError = unitError;
       _categoryError = categoryError;
       _costError = costError;
+      _reorderError = reorderError;
+      _phoneError = phoneError;
       _error = null;
     });
-    if ([nameError, currentError, maxError, unitError, categoryError, costError].any((e) => e != null)) return;
+    if ([nameError, currentError, maxError, unitError, categoryError, costError, reorderError, phoneError].any((e) => e != null)) {
+      return;
+    }
 
     final expiryStr = _expiryDate == null ? null : DateFormat('yyyy-MM-dd').format(_expiryDate!);
 
@@ -1613,6 +1849,11 @@ class _ItemFormPageState extends State<_ItemFormPage> {
           expiryDate: expiryStr ?? '',
           unitCost: cost,
           image: imageArg,
+          reorderLevel: reorder,
+          supplierName: _supplier.text.trim(),
+          supplierPhone: phone,
+          storageLocation: _location ?? '',
+          notes: _notes.text.trim(),
         );
       } else {
         saved = await widget.repo.create(
@@ -1624,6 +1865,11 @@ class _ItemFormPageState extends State<_ItemFormPage> {
           expiryDate: expiryStr,
           unitCost: cost,
           image: imageArg,
+          reorderLevel: reorder,
+          supplierName: _supplier.text.trim(),
+          supplierPhone: phone,
+          storageLocation: _location,
+          notes: _notes.text.trim(),
         );
       }
       if (mounted) Navigator.of(context).pop(saved);
@@ -1765,6 +2011,7 @@ class _ItemFormPageState extends State<_ItemFormPage> {
     final fields = <Widget>[
       if (!_editing) _textField(_current, 'Current stock', error: _currentError, number: true),
       _textField(_max, 'Max stock', error: _maxError, number: true),
+      _textField(_reorder, 'Reorder level (optional)', icon: Icons.notifications_active_outlined, error: _reorderError, number: true),
       _dropdown(
         hint: 'Unit',
         value: _unit,
@@ -1785,8 +2032,17 @@ class _ItemFormPageState extends State<_ItemFormPage> {
           _categoryError = null;
         }),
       ),
+      _dropdown(
+        hint: 'Storage location (optional)',
+        value: _location,
+        options: const [_noLocation, ..._locations],
+        error: null,
+        onChanged: (v) => setState(() => _location = v == _noLocation ? null : v),
+      ),
       _textField(_cost, 'Cost per unit (optional)', icon: Icons.payments_outlined, error: _costError, number: true),
       _expiryField(),
+      _textField(_supplier, 'Supplier (optional)', icon: Icons.local_shipping_outlined),
+      _textField(_phone, 'Supplier phone (optional)', icon: Icons.phone_outlined, error: _phoneError),
     ];
 
     return Scaffold(
@@ -1830,12 +2086,21 @@ class _ItemFormPageState extends State<_ItemFormPage> {
                     );
                   },
                 ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _notes,
+                  enabled: !_saving,
+                  maxLines: 3,
+                  maxLength: 500,
+                  decoration: _fieldDecoration(hint: 'Notes (optional), e.g. keep frozen, use within 2 days of opening'),
+                ),
+                const SizedBox(height: 6),
                 const Text(
-                  'Items count as low stock at 30% of max stock or less, and critical at 10% or less. '
+                  'An item counts as low stock at its reorder level, or at 30% of max stock if you leave the reorder level blank, '
+                  'and as critical at a third of that. '
                   'Measure ingredients by weight or volume in g or ml (not kg or L) so recipes can use small amounts. '
                   'Changing the unit does not convert the numbers, so use Correct count afterwards. '
-                  "Cost and expiry date are both optional, leave them blank if you're not tracking them yet.",
+                  "Everything marked optional can be left blank.",
                   style: TextStyle(fontSize: 12, color: _Ui.muted),
                 ),
                 if (_error != null) ...[
@@ -1978,6 +2243,15 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
     await _apply(() => widget.repo.adjustStock(_item.inventoryId, qty, 'usage'));
   }
 
+  Future<void> _waste() async {
+    final entry = await showDialog<_WasteEntry>(
+      context: context,
+      builder: (_) => _WasteDialog(unit: _item.unit, inStock: _item.quantity),
+    );
+    if (entry == null) return;
+    await _apply(() => widget.repo.adjustStock(_item.inventoryId, entry.quantity, 'waste', reason: entry.reason));
+  }
+
   Future<void> _correctCount() async {
     final actual = await _promptQuantity(
       context,
@@ -2092,6 +2366,16 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
                 children: [
                   if (_item.unitCost > 0)
                     _DetailFact(label: 'Stock value', value: _fmtMoney(_item.stockValue)),
+                  _DetailFact(
+                    label: 'Reorder level',
+                    value: '${_fmtQty(_item.minimumStock)} ${_item.unit}${_item.hasCustomReorder ? '' : ' (default)'}',
+                  ),
+                  if (_item.storageLocation != null) _DetailFact(label: 'Stored in', value: _item.storageLocation!),
+                  if (_item.supplierName != null || _item.supplierPhone != null)
+                    _DetailFact(
+                      label: 'Supplier',
+                      value: [if (_item.supplierName != null) _item.supplierName!, if (_item.supplierPhone != null) _item.supplierPhone!].join(' · '),
+                    ),
                   if (_item.hasExpiryDate)
                     _DetailFact(
                       label: _item.isExpired ? 'Expired' : (_item.isExpiringSoon ? 'Expires soon' : 'Expires'),
@@ -2100,6 +2384,22 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
                     ),
                 ],
               ),
+              if (_item.notes != null) ...[
+                const SizedBox(height: 14),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(color: _Ui.fieldFill, borderRadius: BorderRadius.circular(10)),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.sticky_note_2_outlined, size: 16, color: _Ui.muted),
+                      const SizedBox(width: 8),
+                      Expanded(child: Text(_item.notes!, style: const TextStyle(fontSize: 12.5, color: _Ui.ink))),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 18),
               Wrap(
                 spacing: 8,
@@ -2115,6 +2415,12 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
                     onPressed: _busy ? null : _usage,
                     icon: const Icon(Icons.remove_circle_outline, size: 18),
                     label: const Text('Record usage'),
+                    style: actionStyle,
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: _busy ? null : _waste,
+                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                    label: const Text('Record waste'),
                     style: actionStyle,
                   ),
                   OutlinedButton.icon(
@@ -2193,6 +2499,11 @@ class _HistoryRow extends StatelessWidget {
         icon = Icons.add_circle_outline;
         color = _Ui.greenText;
         label = 'Delivery';
+        break;
+      case 'waste':
+        icon = Icons.delete_sweep_outlined;
+        color = _Ui.redText;
+        label = entry.reason.isEmpty ? 'Waste' : 'Waste: ${entry.reason}';
         break;
       case 'usage':
         icon = Icons.remove_circle_outline;
