@@ -17,7 +17,6 @@ class _Ui {
   static const ink = Color(0xFF2B2B2B);
   static const muted = Color(0xFF7A7A7A);
   static const red = Color(0xFFE53935);
-  static const green = Color(0xFF2E7D32);
 }
 
 enum _Section { profile, password, settings, delete }
