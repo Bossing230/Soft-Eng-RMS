@@ -418,7 +418,7 @@ class _ReservationPageState extends State<ReservationPage> {
       var group = <Reservation>[];
       void flush() {
         if (currentDate == null || group.isEmpty) return;
-        items.add(_header(_dayLabel(currentDate!, board.today), group.length));
+        items.add(_header(_dayLabel(currentDate, board.today), group.length));
         items.addAll(group.map(card));
         group = <Reservation>[];
       }
