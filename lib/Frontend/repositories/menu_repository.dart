@@ -76,6 +76,20 @@ class MenuRepository {
     });
   }
 
+  /// Looks for a dish with this name in any category (ignoring case). Returns
+  /// it (menu_id, food_name, category_id, category_name), or null if the name
+  /// is free. Dishes in [categoryId] are preferred when several match; pass
+  /// [excludeId] when editing so a dish doesn't match itself.
+  Future<Map<String, dynamic>?> checkName(String name, {int? excludeId, int? categoryId}) async {
+    final data = await _api.get('/menu/check-name', query: {
+      'name': name,
+      if (excludeId != null) 'excludeId': '$excludeId',
+      if (categoryId != null) 'categoryId': '$categoryId',
+    });
+    final item = data['item'];
+    return item == null ? null : Map<String, dynamic>.from(item);
+  }
+
   Future<void> setAvailability(int menuId, bool available) {
     return _api.patch('/menu/$menuId/availability', body: {
       'availability': available ? 'available' : 'unavailable',

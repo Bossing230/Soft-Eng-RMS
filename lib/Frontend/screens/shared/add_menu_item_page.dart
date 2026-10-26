@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
@@ -40,6 +41,10 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
   Uint8List? _previewBytes;
   bool _submitting = false;
 
+  // A dish that already has this name (any category), found while typing.
+  Timer? _nameTimer;
+  Map<String, dynamic>? _duplicate;
+
   bool get _isEdit => widget.item != null;
 
   @override
@@ -61,6 +66,7 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
 
   @override
   void dispose() {
+    _nameTimer?.cancel();
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _priceCtrl.dispose();
@@ -73,6 +79,53 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
     if (path.startsWith('http')) return path;
     final base = AppConstants.apiBaseUrl.replaceAll('/api', '');
     return '$base$path';
+  }
+
+  void _scheduleNameCheck() {
+    _nameTimer?.cancel();
+    _nameTimer = Timer(const Duration(milliseconds: 400), _checkName);
+  }
+
+  Future<void> _checkName() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      if (mounted) setState(() => _duplicate = null);
+      return;
+    }
+    try {
+      final found = await _repo.checkName(name, excludeId: widget.item?.menuId, categoryId: _categoryId);
+      // Ignore the answer if the name changed while we were waiting.
+      if (!mounted || name != _nameCtrl.text.trim()) return;
+      setState(() => _duplicate = found);
+    } catch (_) {
+      // The warning is a convenience: if the check fails, the server still
+      // refuses a real duplicate when saving.
+    }
+  }
+
+  bool get _duplicateInSameCategory => _duplicate != null && '${_duplicate!['category_id']}' == '$_categoryId';
+
+  Widget _duplicateNotice() {
+    final d = _duplicate;
+    if (d == null) return const SizedBox.shrink();
+    final same = _duplicateInSameCategory;
+    final color = same ? Colors.red.shade700 : Colors.orange.shade800;
+    final message = same
+        ? '"${d['food_name']}" already exists in ${d['category_name']}. Choose a different name.'
+        : '"${d['food_name']}" already exists in ${d['category_name']}. You can still add it to this category.';
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(same ? Icons.block : Icons.info_outline, size: 18, color: color),
+          const SizedBox(width: 8),
+          Expanded(child: Text(message, style: TextStyle(fontSize: 12.5, color: color))),
+        ],
+      ),
+    );
   }
 
   Future<void> _pickImage() async {
@@ -90,6 +143,12 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
   Future<void> _submit() async {
     if (_nameCtrl.text.trim().isEmpty || _priceCtrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Food name and price are required')));
+      return;
+    }
+    if (_duplicateInSameCategory) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('"${_duplicate!['food_name']}" already exists in ${_duplicate!['category_name']}.'),
+      ));
       return;
     }
 
@@ -205,7 +264,12 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
               children: [
                 _photoArea(),
                 const SizedBox(height: 24),
-                TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Food name', prefixIcon: Icon(Icons.fastfood_outlined))),
+                TextField(
+                  controller: _nameCtrl,
+                  onChanged: (_) => _scheduleNameCheck(),
+                  decoration: const InputDecoration(labelText: 'Food name', prefixIcon: Icon(Icons.fastfood_outlined)),
+                ),
+                _duplicateNotice(),
                 const SizedBox(height: 16),
                 TextField(controller: _descCtrl, decoration: const InputDecoration(labelText: 'Description', prefixIcon: Icon(Icons.notes))),
                 const SizedBox(height: 16),
@@ -219,7 +283,10 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                 DropdownButtonFormField<int>(
                   initialValue: _categoryId,
                   items: widget.categories.map((c) => DropdownMenuItem<int>(value: c['category_id'], child: Text(c['category_name']))).toList(),
-                  onChanged: (v) => setState(() => _categoryId = v!),
+                  onChanged: (v) {
+                    setState(() => _categoryId = v!);
+                    _checkName();
+                  },
                   decoration: const InputDecoration(labelText: 'Category', prefixIcon: Icon(Icons.category_outlined)),
                 ),
                 const SizedBox(height: 16),
