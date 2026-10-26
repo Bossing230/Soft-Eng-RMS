@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:rms/Frontend/models/menu.dart';
 import 'package:rms/Frontend/repositories/order_repository.dart';
 import 'package:rms/Frontend/services/api_services.dart';
-
+import '../../widgets/receipt_dialog.dart';
 import '../../core/constants/app_constants.dart';
 import '../../repositories/menu_repository.dart';
 import '../../repositories/table_repository.dart';
@@ -100,11 +100,13 @@ class _PosPageState extends State<PosPage> {
     super.dispose();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+    Future<void> _load({bool showSpinner = true}) async {
+    if (showSpinner) {
+      setState(() {
+        _loading = true;
+        _error = null;
+      });
+    }
     try {
       // With a preselected table (opened from the Tables page) it may already
       // be occupied, so fetch every table and filter below instead of asking
@@ -126,10 +128,14 @@ class _PosPageState extends State<PosPage> {
         _menu = results[0] as List<MenuItem>;
         _categories = results[1] as List<Map<String, dynamic>>;
         _tables = results[2] as List<Map<String, dynamic>>;
+        _dropStaleSelection();
         _loading = false;
+        _error = null;
       });
     } catch (e) {
       if (!mounted) return;
+      // A failed background refresh keeps what is already on screen.
+      if (!showSpinner && _menu.isNotEmpty) return;
       setState(() {
         _error = '$e';
         _loading = false;
@@ -225,7 +231,7 @@ class _PosPageState extends State<PosPage> {
 
   // ---- place order + pay ----
 
-  Future<void> _placeOrder() async {
+   Future<void> _placeOrder() async {
     if (_cart.isEmpty || _placing) return;
     if (_orderType == 'dine_in' && _selectedTableId == null) {
       _snack('Choose a table for this dine-in order.');
@@ -260,12 +266,15 @@ class _PosPageState extends State<PosPage> {
         items: items,
       );
 
+      // Declared out here so the receipt can use it after the payment step.
+      Map<String, dynamic> payment = {};
+
       try {
         final body = <String, dynamic>{'orderId': order.orderId, 'method': _paymentMethod};
         if (_paymentMethod == 'cash') body['cashReceived'] = cashReceived;
         if (_paymentMethod == 'card') body['cardToken'] = 'demo-card-token';
         final result = await _api.post('/payments', body: body);
-        final payment = Map<String, dynamic>.from(result['payment'] ?? {});
+        payment = Map<String, dynamic>.from(result['payment'] ?? {});
         final checkoutUrl = result['checkoutUrl'];
 
         if (checkoutUrl != null) {
@@ -284,12 +293,32 @@ class _PosPageState extends State<PosPage> {
         _snack('Order #${order.orderId} was placed, but payment failed: $e');
       }
 
+      // Build the receipt before the cart is cleared.
+      final receipt = ReceiptData(
+        orderId: order.orderId,
+        date: DateTime.now(),
+        orderType: _orderType,
+        tableNumber: order.tableNumber,
+        cashier: order.employeeName,
+        paymentMethod: _paymentMethod,
+        paid: payment['payment_status'] == 'paid',
+        items: order.items,
+        subtotal: order.subtotal,
+        discount: order.discount,
+        taxAndService: order.tax,
+        total: order.totalAmount,
+        cashReceived: _paymentMethod == 'cash' ? cashReceived : null,
+        change: payment['change'] == null ? null : double.tryParse('${payment['change']}'),
+      );
+
+      if (!mounted) return;
       setState(() {
         _cart.clear();
         _selectedTableId = null;
         _cashReceivedController.clear();
       });
       _load(); // refreshes available tables and menu
+      showReceiptDialog(context, receipt);
     } on ApiException catch (e) {
       _snack(e.message);
     } catch (e) {

@@ -43,6 +43,7 @@ dependencies:
   typed_data: ^1.4.0
   fl_chart: ^1.2.0
   web: ^1.1.1
+  qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:

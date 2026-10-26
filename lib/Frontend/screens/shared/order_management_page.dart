@@ -1,8 +1,9 @@
 import 'dart:async';
-
+import '../../widgets/receipt_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:rms/Frontend/repositories/order_repository.dart';
+import 'package:rms/Frontend/services/api_services.dart';
 
 import '../../models/order.dart';
 
@@ -121,6 +122,28 @@ String _ago(int? minutes) {
 /// Confirmed orders count under the Pending filter.
 String _group(RmsOrder order) => order.orderStatus == 'confirmed' ? 'pending' : order.orderStatus;
 
+/// Builds the receipt for an order that already exists (Orders page).
+ReceiptData _receiptFor(RmsOrder o) {
+  // minutesAgo comes from the server, so the time is right in any time zone.
+  final when = o.minutesAgo != null
+      ? DateTime.now().subtract(Duration(minutes: o.minutesAgo!))
+      : o.orderDate;
+  return ReceiptData(
+    orderId: o.orderId,
+    date: when,
+    orderType: o.orderType,
+    tableNumber: o.tableNumber,
+    cashier: o.employeeName,
+    paymentMethod: o.paymentMethod ?? 'unpaid',
+    paid: o.paymentStatus == 'paid',
+    items: o.items,
+    subtotal: o.subtotal,
+    discount: o.discount,
+    taxAndService: o.tax,
+    total: o.totalAmount,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
@@ -138,6 +161,7 @@ class OrderManagementPage extends StatefulWidget {
 
 class _OrderManagementPageState extends State<OrderManagementPage> {
   final _repo = OrderRepository();
+  final _api = ApiService();
   Timer? _timer;
   List<RmsOrder> _orders = [];
   bool _loading = true;
@@ -187,6 +211,45 @@ class _OrderManagementPageState extends State<OrderManagementPage> {
   void _snack(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+    Future<void> _findReceipt() async {
+    final controller = TextEditingController();
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Find a receipt'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          decoration: const InputDecoration(hintText: 'Order number, e.g. 47'),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('Find')),
+        ],
+      ),
+    );
+    if (text == null) return; // cancelled
+
+    final id = int.tryParse(text.replaceAll('#', '').trim());
+    if (id == null) {
+      _snack('Enter a valid order number.');
+      return;
+    }
+
+    try {
+      final data = await _api.get('/orders/$id');
+      final order = RmsOrder.fromJson(Map<String, dynamic>.from(data));
+      if (!mounted) return;
+      showReceiptDialog(context, _receiptFor(order));
+    } on ApiException catch (e) {
+      _snack(e.message);
+    } catch (e) {
+      _snack('Could not load the order: $e');
+    }
   }
 
   int _count(String key) {
@@ -257,6 +320,7 @@ class _OrderManagementPageState extends State<OrderManagementPage> {
           selected: _filter,
           onSelect: (key) => setState(() => _filter = key),
           onRefresh: () => _load(showSpinner: false, notifyOnError: true),
+          onFindReceipt: _findReceipt,
         ),
         Expanded(child: _body()),
       ],
@@ -300,6 +364,7 @@ class _OrderManagementPageState extends State<OrderManagementPage> {
                   busy: _busy.contains(order.orderId),
                   canCancel: widget.canForceCancel,
                   onStatus: (next) => _changeStatus(order, next),
+                  onReceipt: () => showReceiptDialog(context, _receiptFor(order)),
                 );
               },
             ),
@@ -326,6 +391,7 @@ class _OrdersHeader extends StatelessWidget {
   final String selected;
   final ValueChanged<String> onSelect;
   final VoidCallback onRefresh;
+  final VoidCallback onFindReceipt;
   const _OrdersHeader({
     required this.pendingCount,
     required this.preparingCount,
@@ -334,6 +400,7 @@ class _OrdersHeader extends StatelessWidget {
     required this.selected,
     required this.onSelect,
     required this.onRefresh,
+    required this.onFindReceipt,
   });
 
   @override
@@ -359,6 +426,16 @@ class _OrdersHeader extends StatelessWidget {
                     _SummaryChip(count: readyCount, status: 'ready'),
                   ],
                 ),
+              ),
+              IconButton(
+                tooltip: 'Find receipt',
+                onPressed: onFindReceipt,
+                icon: const Icon(Icons.receipt_long_outlined, color: _Ui.muted),
+              ),
+              IconButton(
+                tooltip: 'Refresh',
+                onPressed: onRefresh,
+                icon: const Icon(Icons.refresh, color: _Ui.muted),
               ),
               IconButton(
                 tooltip: 'Refresh',
@@ -470,7 +547,8 @@ class _OrderCard extends StatelessWidget {
   final bool busy;
   final bool canCancel;
   final ValueChanged<String> onStatus;
-  const _OrderCard({required this.order, required this.busy, required this.canCancel, required this.onStatus});
+  final VoidCallback onReceipt;
+  const _OrderCard({required this.order, required this.busy, required this.canCancel, required this.onStatus, required this.onReceipt});
 
   @override
   Widget build(BuildContext context) {
@@ -541,6 +619,13 @@ class _OrderCard extends StatelessWidget {
                   Text(_ago(order.minutesAgo), style: const TextStyle(fontSize: 11, color: _Ui.muted)),
                 ],
               ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'View receipt',
+                onPressed: onReceipt,
+                icon: const Icon(Icons.receipt_long_outlined, size: 20, color: _Ui.tanDeep),
+              ),
+              _StatusMenu(current: order.orderStatus, options: options, busy: busy, onSelected: onStatus),
               const Spacer(),
               _StatusMenu(current: order.orderStatus, options: options, busy: busy, onSelected: onStatus),
             ],
