@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:rms/Frontend/models/menu.dart';
 import 'package:rms/Frontend/repositories/order_repository.dart';
@@ -57,6 +58,7 @@ class _PosPageState extends State<PosPage> {
   final _api = ApiService();
   final _searchController = TextEditingController();
   final _cashReceivedController = TextEditingController();
+  Timer? _tableTimer;
 
   List<MenuItem> _menu = [];
   List<Map<String, dynamic>> _categories = [];
@@ -86,10 +88,13 @@ class _PosPageState extends State<PosPage> {
       _selectedTableId = widget.initialTableId;
     }
     _load();
+  // Keeps the table list current when orders are placed or completed elsewhere.
+  _tableTimer = Timer.periodic(const Duration(seconds: 10), (_) => _refreshTables());
   }
 
   @override
   void dispose() {
+    _tableTimer?.cancel();
     _searchController.dispose();
     _cashReceivedController.dispose();
     super.dispose();
@@ -130,6 +135,30 @@ class _PosPageState extends State<PosPage> {
         _loading = false;
       });
     }
+  }
+
+    /// Reloads only the tables, without the spinner, so the dropdown stays current.
+  Future<void> _refreshTables() async {
+    if (!mounted || _loading || _placing) return;
+    try {
+      final tables = await _tableRepo.getAll(
+        status: widget.initialTableId == null ? 'available' : null,
+      );
+      if (!mounted) return;
+      setState(() {
+        _tables = tables;
+        _dropStaleSelection();
+      });
+    } catch (_) {
+      // Keep the old list; the next tick will try again.
+    }
+  }
+
+  /// If the picked table is no longer offered (someone else took it), clear it.
+  void _dropStaleSelection() {
+    if (_selectedTableId == null) return;
+    final stillOffered = _tableOptions.any((t) => t['table_id'] == _selectedTableId);
+    if (!stillOffered) _selectedTableId = null;
   }
 
   void _snack(String message) {
@@ -304,6 +333,7 @@ class _PosPageState extends State<PosPage> {
           tables: _tableOptions,
           selectedTableId: _selectedTableId,
           onTableChanged: (id) => setState(() => _selectedTableId = id),
+          onTableOpen: _refreshTables,
         ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
@@ -417,12 +447,14 @@ class _TypeAndTableRow extends StatelessWidget {
   final List<Map<String, dynamic>> tables;
   final int? selectedTableId;
   final ValueChanged<int?> onTableChanged;
+  final VoidCallback? onTableOpen;
   const _TypeAndTableRow({
     required this.orderType,
     required this.onTypeChanged,
     required this.tables,
     required this.selectedTableId,
     required this.onTableChanged,
+    this.onTableOpen,
   });
 
   static const _types = {'dine_in': 'Dine-in', 'takeout': 'Takeout', 'delivery': 'Delivery'};
@@ -463,6 +495,7 @@ class _TypeAndTableRow extends StatelessWidget {
       tables: tables,
       selectedId: selectedTableId,
       onChanged: onTableChanged,
+      onOpen: onTableOpen,
     );
 
     return Padding(
@@ -482,7 +515,8 @@ class _TableDropdown extends StatelessWidget {
   final List<Map<String, dynamic>> tables;
   final int? selectedId;
   final ValueChanged<int?> onChanged;
-  const _TableDropdown({required this.enabled, required this.tables, required this.selectedId, required this.onChanged});
+  final VoidCallback? onOpen;
+  const _TableDropdown({required this.enabled, required this.tables, required this.selectedId, required this.onChanged, this.onOpen});
 
   @override
   Widget build(BuildContext context) {
