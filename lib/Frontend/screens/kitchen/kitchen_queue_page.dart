@@ -147,6 +147,10 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
   int? _selectedOrderId;
   final Set<int> _busy = {};
 
+  /// Bumped on every setState so the mobile bottom sheet (which lives outside
+  /// this page's widget tree) rebuilds with the latest order and busy state.
+  final _tick = ValueNotifier<int>(0);
+
   @override
   void initState() {
     super.initState();
@@ -160,7 +164,21 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
   void dispose() {
     _pollTimer?.cancel();
     _socket.disconnect();
+    _tick.dispose();
     super.dispose();
+  }
+
+  @override
+  void setState(VoidCallback fn) {
+    super.setState(fn);
+    _tick.value++;
+  }
+
+  Map<String, dynamic>? _orderById(int id) {
+    for (final o in _orders) {
+      if (o['order_id'] == id) return o;
+    }
+    return null;
   }
 
   Future<void> _load({bool showSpinner = true}) async {
@@ -229,7 +247,6 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
       setState(() => _selectedOrderId = orderId);
       return;
     }
-    final order = _orders.firstWhere((o) => o['order_id'] == orderId);
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -240,11 +257,24 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
         minChildSize: 0.5,
         maxChildSize: 0.95,
         expand: false,
-        builder: (context, scrollController) => _OrderDetailPanel(
-          order: order,
-          busy: _busy.contains(orderId),
-          scrollController: scrollController,
-          onAdvance: (next) => _advance(order, next),
+        // Looks the order up again on every update, so the sheet shows the
+        // spinner and the new status right after Start Preparing / Mark as Ready.
+        builder: (context, scrollController) => ValueListenableBuilder<int>(
+          valueListenable: _tick,
+          builder: (context, _, __) {
+            final order = _orderById(orderId);
+            if (order == null) {
+              return const Center(
+                child: Text('This order is no longer on the board.', style: TextStyle(color: _Ui.muted)),
+              );
+            }
+            return _OrderDetailPanel(
+              order: order,
+              busy: _busy.contains(orderId),
+              scrollController: scrollController,
+              onAdvance: (next) => _advance(order, next),
+            );
+          },
         ),
       ),
     );
@@ -685,8 +715,9 @@ class _OrderDetailPanel extends StatelessWidget {
             ? ('ready', 'Mark as Ready')
             : null;
 
+    final cookingMinutes = _asNum(order['cooking_minutes'] ?? order['minutes_ago']).toInt();
     final elapsedLabel = order['prep_started_at'] != null
-        ? 'Cooking for ${_elapsedLabel(_asNum(order['cooking_minutes'] ?? order['minutes_ago']).toInt())}'
+        ? (cookingMinutes < 1 ? 'Just started cooking' : 'Cooking for ${_elapsedLabel(cookingMinutes)}')
         : 'Waiting to start · ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())} in queue';
 
     return SingleChildScrollView(
