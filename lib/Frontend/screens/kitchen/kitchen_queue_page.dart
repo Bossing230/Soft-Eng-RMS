@@ -87,9 +87,20 @@ String _typeLabel(String type) {
   }
 }
 
-String _elapsedLabel(int minutes) => minutes < 1 ? 'just now' : '${minutes}m';
+   String _elapsedLabel(int minutes) {
+     if (minutes < 1) return 'just now';
+     if (minutes < 60) return '${minutes}m';
+     if (minutes < 1440) {
+       final m = minutes % 60;
+       return m == 0 ? '${minutes ~/ 60}h' : '${minutes ~/ 60}h ${m}m';
+     }
+     final h = (minutes % 1440) ~/ 60;
+     return h == 0 ? '${minutes ~/ 1440}d' : '${minutes ~/ 1440}d ${h}h';
+   }
 
-final _money = (num v) => '₱${v.toStringAsFixed(2)}';
+   String _agoLabel(int minutes) => minutes < 1 ? 'just now' : '${_elapsedLabel(minutes)} ago';
+
+   String _money(num v) => '₱${v.toStringAsFixed(2)}';
 
 // ---------------------------------------------------------------------------
 // Page
@@ -614,7 +625,7 @@ class _OrderDetailPanel extends StatelessWidget {
             : null;
 
     final elapsedLabel = order['prep_started_at'] != null
-        ? 'Cooking for ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())}'
+           ? 'Cooking for ${_elapsedLabel(_asNum(order['cooking_minutes'] ?? order['minutes_ago']).toInt())}'
         : 'Waiting to start · ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())} in queue';
 
     return SingleChildScrollView(
@@ -637,7 +648,7 @@ class _OrderDetailPanel extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-            '${tableNumber ?? _typeLabel('${order['order_type']}')} · ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())} ago',
+              '${tableNumber ?? _typeLabel('${order['order_type']}')} · ${_agoLabel(_asNum(order['minutes_ago']).toInt())}',
             style: const TextStyle(fontSize: 13, color: _Ui.muted),
           ),
           const SizedBox(height: 18),
