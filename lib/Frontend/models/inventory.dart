@@ -83,7 +83,9 @@ class InventoryItem {
       severity: (json['severity'] ?? json['status'] ?? 'ok').toString(),
       expiryDate: json['expiry_date'],
       unitCost: double.tryParse('${json['unit_cost'] ?? 0}') ?? 0,
-      lastUpdated: json['updated_at']?.toString(),
+      // updated_at_local is already in the restaurant's time zone; updated_at
+      // (the database clock) is only a fallback for an older server.
+      lastUpdated: (json['updated_at_local'] ?? json['updated_at'])?.toString(),
       image: (rawImage == null || rawImage.isEmpty) ? null : rawImage,
       reorderLevel: json['reorder_level'] == null ? null : double.tryParse('${json['reorder_level']}'),
       supplierName: clean(json['supplier_name']),
