@@ -24,6 +24,16 @@ num _asNum(dynamic v) => v is num ? v : (num.tryParse('$v') ?? 0);
 List<Map<String, dynamic>> _asList(dynamic v) =>
     ((v as List?) ?? const []).map((e) => Map<String, dynamic>.from(e as Map)).toList();
 
+/// The station an item belongs to (an item with no station falls back to Grill).
+String _itemStation(Map<String, dynamic> item) {
+  final s = '${item['station'] ?? ''}'.trim().toLowerCase();
+  return s.isEmpty ? 'grill' : s;
+}
+
+/// Only the items of [order] that belong to [stationKey].
+List<Map<String, dynamic>> _itemsFor(Map<String, dynamic> order, String stationKey) =>
+    _asList(order['items']).where((i) => _itemStation(i) == stationKey).toList();
+
 // Stations this app understands — must match Backend/constants/stations.js.
 const _stationIcons = {
   'grill': Icons.local_fire_department_outlined,
@@ -87,30 +97,34 @@ String _typeLabel(String type) {
   }
 }
 
-   String _elapsedLabel(int minutes) {
-     if (minutes < 1) return 'just now';
-     if (minutes < 60) return '${minutes}m';
-     if (minutes < 1440) {
-       final m = minutes % 60;
-       return m == 0 ? '${minutes ~/ 60}h' : '${minutes ~/ 60}h ${m}m';
-     }
-     final h = (minutes % 1440) ~/ 60;
-     return h == 0 ? '${minutes ~/ 1440}d' : '${minutes ~/ 1440}d ${h}h';
-   }
+String _elapsedLabel(int minutes) {
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return '${minutes}m';
+  if (minutes < 1440) {
+    final m = minutes % 60;
+    return m == 0 ? '${minutes ~/ 60}h' : '${minutes ~/ 60}h ${m}m';
+  }
+  final h = (minutes % 1440) ~/ 60;
+  return h == 0 ? '${minutes ~/ 1440}d' : '${minutes ~/ 1440}d ${h}h';
+}
 
-   String _agoLabel(int minutes) => minutes < 1 ? 'just now' : '${_elapsedLabel(minutes)} ago';
+String _agoLabel(int minutes) => minutes < 1 ? 'just now' : '${_elapsedLabel(minutes)} ago';
 
-   String _money(num v) => '₱${v.toStringAsFixed(2)}';
+String _money(num v) => '₱${v.toStringAsFixed(2)}';
 
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
 /// Kitchen Orders board: active orders grouped by station, with a detail
-/// panel for whichever order is selected. Kitchen staff can start cooking
-/// and mark an order ready; moving it on to served/completed is the
-/// cashier's job (see the backend's TRANSITIONS table), so those later
-/// stages show on the status track but aren't tappable here.
+/// panel for whichever order is selected. An order that has items for several
+/// stations (for example food and a drink) shows up under each of them, and
+/// each card lists only that station's items.
+///
+/// Kitchen staff can start cooking and mark an order ready; moving it on to
+/// served/completed is the cashier's job (see the backend's TRANSITIONS
+/// table), so those later stages show on the status track but aren't tappable
+/// here. Status is per order, not per station.
 class KitchenQueuePage extends StatefulWidget {
   const KitchenQueuePage({super.key});
 
@@ -184,10 +198,17 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Orders shown for the selected station tab: every order that has at least
+  /// one item for that station.
   List<Map<String, dynamic>> get _visibleOrders {
     if (_selectedStation == 'all') return _orders;
-    return _orders.where((o) => '${o['station']}'.toLowerCase() == _selectedStation).toList();
+    return _orders.where((o) => _itemsFor(o, _selectedStation).isNotEmpty).toList();
   }
+
+  /// How many open orders have at least one item for this station.
+  int _stationCount(String key) => _orders
+      .where((o) => o['order_status'] != 'completed' && _itemsFor(o, key).isNotEmpty)
+      .length;
 
   Future<void> _advance(Map<String, dynamic> order, String next) async {
     final orderId = order['order_id'] as int;
@@ -259,10 +280,14 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
 
     return Column(
       children: [
-        _Header(activeCount: _orders.where((o) => o['order_status'] != 'completed').length, onRefresh: () => _load(showSpinner: false)),
+        _Header(
+          activeCount: _orders.where((o) => o['order_status'] != 'completed').length,
+          onRefresh: () => _load(showSpinner: false),
+        ),
         _StationTabs(
           stations: _stations,
           totalActive: _orders.where((o) => o['order_status'] != 'completed').length,
+          countFor: _stationCount,
           selected: _selectedStation,
           onSelected: (key) => setState(() => _selectedStation = key),
         ),
@@ -275,6 +300,7 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
                     : _StationBoard(
                         orders: _visibleOrders,
                         stations: _selectedStation == 'all' ? _stations : null,
+                        selectedStation: _selectedStation,
                         selectedOrderId: wide ? _selectedOrderId : null,
                         onTap: (id) => _selectOrder(id),
                       ),
@@ -319,14 +345,14 @@ class _Header extends StatelessWidget {
         children: [
           const Icon(Icons.restaurant_menu, color: _Ui.tanDeep),
           const SizedBox(width: 10),
-          Expanded(
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('Kitchen Orders', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: _Ui.ink)),
+                Text('Kitchen Orders', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: _Ui.ink)),
                 Text(
                   'Track and manage all kitchen orders in real time',
-                  style: const TextStyle(fontSize: 12, color: _Ui.muted),
+                  style: TextStyle(fontSize: 12, color: _Ui.muted),
                 ),
               ],
             ),
@@ -348,9 +374,18 @@ class _Header extends StatelessWidget {
 class _StationTabs extends StatelessWidget {
   final List<Map<String, dynamic>> stations;
   final int totalActive;
+
+  /// Open orders that have at least one item for the given station key.
+  final int Function(String key) countFor;
   final String selected;
   final ValueChanged<String> onSelected;
-  const _StationTabs({required this.stations, required this.totalActive, required this.selected, required this.onSelected});
+  const _StationTabs({
+    required this.stations,
+    required this.totalActive,
+    required this.countFor,
+    required this.selected,
+    required this.onSelected,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -374,7 +409,7 @@ class _StationTabs extends StatelessWidget {
               _Pill(
                 icon: _stationIcons['${s['key']}'],
                 label: '${s['label']}'.replaceAll(' Station', ''),
-                count: _asNum(s['count']).toInt(),
+                count: countFor('${s['key']}'),
                 selected: selected == s['key'],
                 onTap: () => onSelected('${s['key']}'),
               ),
@@ -440,19 +475,35 @@ class _Pill extends StatelessWidget {
 
 class _StationBoard extends StatelessWidget {
   final List<Map<String, dynamic>> orders;
+
   /// When set, orders are split into one column per station (the "All
   /// Stations" view); otherwise they're a single list (one station selected).
   final List<Map<String, dynamic>>? stations;
+  final String selectedStation;
   final int? selectedOrderId;
   final ValueChanged<int> onTap;
-  const _StationBoard({required this.orders, required this.stations, required this.selectedOrderId, required this.onTap});
+  const _StationBoard({
+    required this.orders,
+    required this.stations,
+    required this.selectedStation,
+    required this.selectedOrderId,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     if (stations == null) {
       return ListView(
         padding: const EdgeInsets.all(16),
-        children: [for (final o in orders) _OrderCard(order: o, selected: o['order_id'] == selectedOrderId, onTap: () => onTap(o['order_id'] as int))],
+        children: [
+          for (final o in orders)
+            _OrderCard(
+              order: o,
+              stationKey: selectedStation,
+              selected: o['order_id'] == selectedOrderId,
+              onTap: () => onTap(o['order_id'] as int),
+            ),
+        ],
       );
     }
 
@@ -467,7 +518,7 @@ class _StationBoard extends StatelessWidget {
               padding: const EdgeInsets.only(right: 16),
               child: _StationColumn(
                 station: s,
-                orders: orders.where((o) => '${o['station']}'.toLowerCase() == s['key']).toList(),
+                orders: orders.where((o) => _itemsFor(o, '${s['key']}').isNotEmpty).toList(),
                 selectedOrderId: selectedOrderId,
                 onTap: onTap,
               ),
@@ -487,6 +538,8 @@ class _StationColumn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final openCount = orders.where((o) => o['order_status'] != 'completed').length;
+
     return SizedBox(
       width: 230,
       child: Column(
@@ -507,7 +560,7 @@ class _StationColumn extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                 decoration: BoxDecoration(color: _Ui.tanTint, borderRadius: BorderRadius.circular(10)),
-                child: Text('${station['count']}', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _Ui.tanDeep)),
+                child: Text('$openCount', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _Ui.tanDeep)),
               ),
             ],
           ),
@@ -521,7 +574,12 @@ class _StationColumn extends StatelessWidget {
             for (final o in orders)
               Padding(
                 padding: const EdgeInsets.only(bottom: 10),
-                child: _OrderCard(order: o, selected: o['order_id'] == selectedOrderId, onTap: () => onTap(o['order_id'] as int)),
+                child: _OrderCard(
+                  order: o,
+                  stationKey: '${station['key']}',
+                  selected: o['order_id'] == selectedOrderId,
+                  onTap: () => onTap(o['order_id'] as int),
+                ),
               ),
         ],
       ),
@@ -531,15 +589,18 @@ class _StationColumn extends StatelessWidget {
 
 class _OrderCard extends StatelessWidget {
   final Map<String, dynamic> order;
+
+  /// When set, the card lists only this station's items.
+  final String? stationKey;
   final bool selected;
   final VoidCallback onTap;
-  const _OrderCard({required this.order, required this.selected, required this.onTap});
+  const _OrderCard({required this.order, this.stationKey, required this.selected, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
     final status = '${order['order_status']}';
     final style = _cardStatusStyle(status);
-    final items = _asList(order['items']);
+    final items = stationKey == null ? _asList(order['items']) : _itemsFor(order, stationKey!);
     final itemsText = items.map((i) => '${i['quantity']}× ${i['food_name']}').join(', ');
     final tableNumber = order['table_number'] as String?;
 
@@ -625,7 +686,7 @@ class _OrderDetailPanel extends StatelessWidget {
             : null;
 
     final elapsedLabel = order['prep_started_at'] != null
-           ? 'Cooking for ${_elapsedLabel(_asNum(order['cooking_minutes'] ?? order['minutes_ago']).toInt())}'
+        ? 'Cooking for ${_elapsedLabel(_asNum(order['cooking_minutes'] ?? order['minutes_ago']).toInt())}'
         : 'Waiting to start · ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())} in queue';
 
     return SingleChildScrollView(
@@ -648,7 +709,7 @@ class _OrderDetailPanel extends StatelessWidget {
           ),
           const SizedBox(height: 4),
           Text(
-              '${tableNumber ?? _typeLabel('${order['order_type']}')} · ${_agoLabel(_asNum(order['minutes_ago']).toInt())}',
+            '${tableNumber ?? _typeLabel('${order['order_type']}')} · ${_agoLabel(_asNum(order['minutes_ago']).toInt())}',
             style: const TextStyle(fontSize: 13, color: _Ui.muted),
           ),
           const SizedBox(height: 18),
@@ -667,6 +728,10 @@ class _OrderDetailPanel extends StatelessWidget {
                   Text('${item['quantity']}×', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.tanDeep)),
                   const SizedBox(width: 8),
                   Expanded(child: Text('${item['food_name']}', style: const TextStyle(fontSize: 13, color: _Ui.ink))),
+                  Text(
+                    _itemStation(item)[0].toUpperCase() + _itemStation(item).substring(1),
+                    style: const TextStyle(fontSize: 11, color: _Ui.muted),
+                  ),
                 ],
               ),
             ),

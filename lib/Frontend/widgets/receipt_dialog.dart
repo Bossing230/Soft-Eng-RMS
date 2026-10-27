@@ -8,7 +8,7 @@ import '../models/order.dart';
 const _restaurantName = 'Restaurant Management System';
 const _tagline = 'Good food. Good times.';
 const _addressLine1 = 'Barangay 2';
-const _addressLine2 = 'City, Province';
+const _addressLine2 = 'Tangub City, Misamis Occidental, Philippines';
 
 // Paste your Google Form link here. Leave it empty to hide the QR code.
 const _feedbackUrl = 'https://docs.google.com/forms/d/e/1FAIpQLSdOUkjV0gaSTJEf1QilAEmCcA1xkhjvdOwih-HWClssxQ8rpQ/viewform?usp=dialog';
