@@ -32913,7 +32913,8 @@ k=a3.h(0,"expiry_date")
 j=a3.h(0,"unit_cost")
 j=A.cm(A.h(j==null?0:j))
 if(j==null)j=0
-i=a3.h(0,"updated_at")
+i=a3.h(0,"updated_at_local")
+if(i==null)i=a3.h(0,"updated_at")
 i=i==null?c:J.b1(i)
 h=a2==null||a2.length===0?c:a2
 g=a3.h(0,b)==null?c:A.cm(A.h(a3.h(0,b)))
