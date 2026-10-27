@@ -432,11 +432,7 @@ class _OrdersHeader extends StatelessWidget {
                 onPressed: onFindReceipt,
                 icon: const Icon(Icons.receipt_long_outlined, color: _Ui.muted),
               ),
-              IconButton(
-                tooltip: 'Refresh',
-                onPressed: onRefresh,
-                icon: const Icon(Icons.refresh, color: _Ui.muted),
-              ),
+              
               IconButton(
                 tooltip: 'Refresh',
                 onPressed: onRefresh,
@@ -625,7 +621,6 @@ class _OrderCard extends StatelessWidget {
                 onPressed: onReceipt,
                 icon: const Icon(Icons.receipt_long_outlined, size: 20, color: _Ui.tanDeep),
               ),
-              _StatusMenu(current: order.orderStatus, options: options, busy: busy, onSelected: onStatus),
               const Spacer(),
               _StatusMenu(current: order.orderStatus, options: options, busy: busy, onSelected: onStatus),
             ],
