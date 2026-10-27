@@ -156,7 +156,7 @@ class _MenuManagementPageState extends State<MenuManagementPage> {
       MaterialPageRoute(builder: (_) => EditRecipePage(item: item)),
     );
     if (saved == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Recipe saved for ${item.foodName}.')));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Stock setup saved for ${item.foodName}.')));
     }
   }
 

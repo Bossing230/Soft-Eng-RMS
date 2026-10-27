@@ -145,7 +145,7 @@ class MenuCard extends StatelessWidget {
           if (onEdit != null)
             const PopupMenuItem(value: 'edit', child: ListTile(leading: Icon(Icons.edit_outlined), title: Text('Edit item'), dense: true)),
           if (onRecipe != null)
-            const PopupMenuItem(value: 'recipe', child: ListTile(leading: Icon(Icons.menu_book_outlined), title: Text('Edit recipe'), dense: true)),
+            const PopupMenuItem(value: 'recipe', child: ListTile(leading: Icon(Icons.menu_book_outlined), title: Text('Recipe & stock'), dense: true)),
           if (onDelete != null)
             const PopupMenuItem(
               value: 'delete',
