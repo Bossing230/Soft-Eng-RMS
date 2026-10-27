@@ -8,7 +8,13 @@ import '../../repositories/menu_repository.dart';
 import '../../widgets/recipe_editor.dart';
 
 // Must match Backend/constants/stations.js.
-const _stations = ['Grill', 'Pasta', 'Salad', 'Desserts', 'Drinks'];
+const _stations = ['Grill', 'Pasta', 'Salad', 'Desserts', 'Drinks', 'Counter'];
+
+/// 30 -> "30", 12.5 -> "12.50" (for stock amounts coming from the server).
+String _num(dynamic v) {
+  final n = v is num ? v.toDouble() : (double.tryParse('$v') ?? 0);
+  return n == n.roundToDouble() ? n.toStringAsFixed(0) : n.toStringAsFixed(2);
+}
 
 /// A full page (not a dialog) for adding OR editing a menu item. This exists
 /// specifically to avoid a known Flutter Web bug where a modal
@@ -37,6 +43,15 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
   late int _categoryId;
   String _station = _stations.first;
 
+  // How the item is sold: 'dish' = cooked from a recipe, 'ready' = sold as it
+  // is (like a bottle of Coke) and linked to one inventory item.
+  String _kind = 'dish';
+  final _perSaleCtrl = TextEditingController(text: '1');
+  List<Map<String, dynamic>> _stockOptions = [];
+  int? _stockItemId; // null = don't track stock
+  bool _stockLoading = false;
+  String? _stockError;
+
   XFile? _pickedImage;
   Uint8List? _previewBytes;
   bool _submitting = false;
@@ -51,6 +66,10 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
   void initState() {
     super.initState();
     _categoryId = widget.categories.first['category_id'];
+    if (widget.item == null) {
+      _stockLoading = true;
+      _loadStockOptions();
+    }
 
     final item = widget.item;
     if (item != null) {
@@ -67,6 +86,7 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
   @override
   void dispose() {
     _nameTimer?.cancel();
+    _perSaleCtrl.dispose();
     _nameCtrl.dispose();
     _descCtrl.dispose();
     _priceCtrl.dispose();
@@ -128,6 +148,161 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
     );
   }
 
+  /// Items that aren't cooked: drinks, counter items and anything marked ready-made.
+  bool get _notCooked => _kind == 'ready' || _station == 'Drinks' || _station == 'Counter';
+
+  /// Where a ready-made item is handed out: Drinks for bottles and cups,
+  /// the Counter for anything else (packaged snacks, bottled goods...).
+  String _defaultReadyStation() {
+    var name = '';
+    for (final c in widget.categories) {
+      if (c['category_id'] == _categoryId) name = '${c['category_name']}'.toLowerCase();
+    }
+    const drinkWords = ['drink', 'beverage', 'soda', 'juice', 'water', 'coffee', 'tea', 'shake'];
+    return drinkWords.any(name.contains) ? 'Drinks' : 'Counter';
+  }
+
+  Future<void> _loadStockOptions() async {
+    try {
+      final options = await _repo.getRecipeIngredientOptions();
+      if (!mounted) return;
+      setState(() {
+        _stockOptions = options;
+        _stockLoading = false;
+        _stockError = null;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _stockLoading = false;
+        _stockError = '$e';
+      });
+    }
+  }
+
+  /// The unit of the linked inventory item (g, ml, pcs...), if one is chosen.
+  String? get _stockUnit {
+    for (final o in _stockOptions) {
+      if (o['inventory_id'] == _stockItemId) return '${o['unit']}';
+    }
+    return null;
+  }
+
+  Widget _stockSection() {
+    final ready = _kind == 'ready';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text('How is this sold?', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 10),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(value: 'dish', icon: Icon(Icons.restaurant), label: Text('Cooked dish')),
+            ButtonSegment(value: 'ready', icon: Icon(Icons.local_drink_outlined), label: Text('Ready-made item')),
+          ],
+          selected: {_kind},
+          onSelectionChanged: _submitting
+              ? null
+              : (selection) => setState(() {
+                    _kind = selection.first;
+                    // Nothing is cooked for a ready-made item: hand it out from Drinks or the Counter unless a station was chosen.
+                    if (_kind == 'ready' && _station == _stations.first) _station = _defaultReadyStation();
+                  }),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          ready
+              ? 'Sold as it is, like a bottle of Coke. It is not cooked, so it has no recipe: link it to the item in your inventory instead.'
+              : 'Cooked in the kitchen from one or more ingredients. Add them in the recipe below.',
+          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+        ),
+        const SizedBox(height: 16),
+        // Kept alive (just hidden) so a half-written recipe isn't lost when switching.
+        Visibility(
+          visible: !ready,
+          maintainState: true,
+          child: RecipeEditor(
+            key: _recipeKey,
+            price: double.tryParse(_priceCtrl.text.trim()) ?? 0,
+            enabled: !_submitting,
+          ),
+        ),
+        if (ready) _readyMadeFields(),
+      ],
+    );
+  }
+
+  Widget _readyMadeFields() {
+    if (_stockLoading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+      );
+    }
+    if (_stockError != null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text("Couldn't load the inventory: $_stockError", style: TextStyle(fontSize: 12.5, color: Colors.red.shade700)),
+          TextButton(
+            onPressed: () {
+              setState(() => _stockLoading = true);
+              _loadStockOptions();
+            },
+            child: const Text('Try again'),
+          ),
+        ],
+      );
+    }
+
+    final unit = _stockUnit;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        DropdownButtonFormField<int?>(
+          initialValue: _stockItemId,
+          isExpanded: true,
+          decoration: const InputDecoration(labelText: 'Inventory item', prefixIcon: Icon(Icons.inventory_2_outlined)),
+          items: [
+            const DropdownMenuItem<int?>(value: null, child: Text("Don't track stock")),
+            for (final o in _stockOptions)
+              DropdownMenuItem<int?>(
+                value: o['inventory_id'] as int,
+                child: Text('${o['ingredient_name']} (${_num(o['quantity'])} ${o['unit']} in stock)', overflow: TextOverflow.ellipsis),
+              ),
+          ],
+          onChanged: _submitting ? null : (v) => setState(() => _stockItemId = v),
+        ),
+        const SizedBox(height: 8),
+        if (_stockItemId != null) ...[
+          const SizedBox(height: 8),
+          TextField(
+            controller: _perSaleCtrl,
+            enabled: !_submitting,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'Amount taken out per sale',
+              prefixIcon: const Icon(Icons.remove_circle_outline),
+              suffixText: unit,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Each time this is ordered, that amount is taken out of the inventory item. '
+            'If the inventory runs out, it can no longer be ordered.',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+        ] else
+          Text(
+            _stockOptions.isEmpty
+                ? 'There are no inventory items yet. Add it in Inventory first, or leave this as it is to sell it without tracking stock.'
+                : "Stock isn't tracked: ordering this won't change your inventory.",
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+      ],
+    );
+  }
+
   Future<void> _pickImage() async {
     final picker = ImagePicker();
     final file = await picker.pickImage(source: ImageSource.gallery, maxWidth: 1000);
@@ -156,11 +331,24 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
     // an ingredient row is half filled in, and the editor already said so.
     // Only used when adding; editing a recipe happens on its own page.
     List<Map<String, dynamic>> ingredients = <Map<String, dynamic>>[];
-    if (!_isEdit) {
+    if (!_isEdit && _kind == 'dish') {
       final editor = _recipeKey.currentState;
       final collected = editor == null ? <Map<String, dynamic>>[] : editor.collect();
       if (collected == null) return;
       ingredients = collected;
+    } else if (!_isEdit && _kind == 'ready' && _stockItemId != null) {
+      // A ready-made item is stored as a one-ingredient recipe: each sale takes
+      // this amount out of the linked inventory item.
+      final perSale = double.tryParse(_perSaleCtrl.text.trim());
+      if (perSale == null || perSale <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Enter how much is taken out of inventory per sale (more than zero).')),
+        );
+        return;
+      }
+      ingredients = [
+        {'inventoryId': _stockItemId, 'quantity': perSale},
+      ];
     }
 
     setState(() => _submitting = true);
@@ -284,7 +472,13 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                   initialValue: _categoryId,
                   items: widget.categories.map((c) => DropdownMenuItem<int>(value: c['category_id'], child: Text(c['category_name']))).toList(),
                   onChanged: (v) {
-                    setState(() => _categoryId = v!);
+                    setState(() {
+                      _categoryId = v!;
+                      // Keep the automatic Drinks / Counter choice in step with the category.
+                      if (_kind == 'ready' && (_station == 'Drinks' || _station == 'Counter')) {
+                        _station = _defaultReadyStation();
+                      }
+                    });
                     _checkName();
                   },
                   decoration: const InputDecoration(labelText: 'Category', prefixIcon: Icon(Icons.category_outlined)),
@@ -294,10 +488,14 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                   initialValue: _station,
                   items: _stations.map((s) => DropdownMenuItem<String>(value: s, child: Text('$s Station'))).toList(),
                   onChanged: (v) => setState(() => _station = v!),
-                  decoration: const InputDecoration(
-                    labelText: 'Kitchen station',
-                    helperText: 'Which station in the kitchen cooks this dish',
-                    prefixIcon: Icon(Icons.soup_kitchen_outlined),
+                  decoration: InputDecoration(
+                    // Drinks and other ready-made items aren't cooked, so don't say "cooks".
+                    labelText: _notCooked ? 'Handed out by' : 'Kitchen station',
+                    helperText: _notCooked
+                        ? "Not cooked. Drinks for bottles and cups, Counter for packaged items like chips. That screen shows the order so it can be handed out."
+                        : "The station that cooks this dish. Its orders show up on that station's screen.",
+                    helperMaxLines: 2,
+                    prefixIcon: const Icon(Icons.soup_kitchen_outlined),
                   ),
                 ),
                 const SizedBox(height: 28),
@@ -316,11 +514,7 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                     ),
                   )
                 else
-                  RecipeEditor(
-                    key: _recipeKey,
-                    price: double.tryParse(_priceCtrl.text.trim()) ?? 0,
-                    enabled: !_submitting,
-                  ),
+                  _stockSection(),
                 const SizedBox(height: 32),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,

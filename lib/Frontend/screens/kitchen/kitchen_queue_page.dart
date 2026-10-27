@@ -31,6 +31,7 @@ const _stationIcons = {
   'salad': Icons.eco_outlined,
   'desserts': Icons.icecream_outlined,
   'drinks': Icons.local_cafe_outlined,
+  'counter': Icons.storefront_outlined,
 };
 
 // Order status -> the Cooking/Ready/Serving/Delivered track, and its color.
