@@ -32,8 +32,9 @@ class _Ui {
 
 /// Standard choices, so "g", "G" and "grams" don't become three different units.
 /// Ingredients measured by weight or volume use g / ml (not kg / L) so recipes
-/// can use small amounts like 30 g. Countable things use pcs, pack, can, etc.
-const _units = ['g', 'ml', 'pcs', 'pack', 'can', 'bottle', 'box', 'sack'];
+/// can use small amounts like 30 g. A tablespoon (tbsp, about 15 ml) suits oil,
+/// vinegar, soy sauce and similar. Countable things use pcs, pack, can, etc.
+const _units = ['g', 'ml', 'tbsp', 'pcs', 'pack', 'can', 'bottle', 'box', 'sack'];
 const _categories = [
   'Meat',
   'Seafood',
@@ -2098,7 +2099,7 @@ class _ItemFormPageState extends State<_ItemFormPage> {
                 const Text(
                   'An item counts as low stock at its reorder level, or at 30% of max stock if you leave the reorder level blank, '
                   'and as critical at a third of that. '
-                  'Measure ingredients by weight or volume in g or ml (not kg or L) so recipes can use small amounts. '
+                  'Measure ingredients by weight or volume in g, ml or tbsp (not kg or L) so recipes can use small amounts. '
                   'Changing the unit does not convert the numbers, so use Correct count afterwards. '
                   "Everything marked optional can be left blank.",
                   style: TextStyle(fontSize: 12, color: _Ui.muted),

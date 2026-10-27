@@ -3,6 +3,7 @@ import 'package:rms/Frontend/screens/manager/menu_management_page.dart';
 import 'package:rms/Frontend/screens/shared/order_management_page.dart';
 import 'package:rms/Frontend/screens/shared/report_page.dart';
 import '../shared/role_scaffold.dart';
+import '../shared/tables_management_page.dart';
 import 'manager_overview_page.dart';
 import 'inventory_management_page.dart';
 import '../shared/reservation_page.dart';
@@ -17,6 +18,7 @@ class ManagerDashboardScreen extends StatelessWidget {
       items: [
         RoleNavItem(label: 'Overview', icon: Icons.dashboard, page: ManagerOverviewPage(), pageTitle: 'Manager Dashboard'),
         RoleNavItem(label: 'Orders', icon: Icons.receipt_long, page: OrderManagementPage(canForceCancel: true)),
+        RoleNavItem(label: 'Tables', icon: Icons.table_bar, page: TablesManagementPage(canManage: true)),
         RoleNavItem(label: 'Reservations', icon: Icons.event_seat, page: ReservationPage()),
         RoleNavItem(label: 'Menu', icon: Icons.restaurant_menu, page: MenuManagementPage()),
         RoleNavItem(label: 'Inventory', icon: Icons.inventory_2, page: InventoryManagementPage()),

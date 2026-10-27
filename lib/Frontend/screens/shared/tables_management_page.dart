@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:rms/Frontend/services/api_services.dart';
 
 import '../../repositories/table_repository.dart';
 import '../cashier/pos_page.dart';
@@ -43,11 +44,24 @@ _StatusStyle _styleFor(String status) {
 
 String _titleCase(String s) => s.isEmpty ? s : (s[0].toUpperCase() + s.substring(1));
 
+/// "Indoor" or "Outdoor" for a table row (anything else, or empty, counts as indoor).
+String _locationLabel(dynamic location) {
+  final value = '${location ?? ''}'.trim().toLowerCase();
+  return _titleCase(value == 'outdoor' ? 'outdoor' : 'indoor');
+}
+
 /// Tables board for Manager, Admin and Cashier: every table as a card,
-/// colored by status, with who is currently seated there when known.
-/// Tapping a card opens a sheet to change its status or start a new order.
+/// colored by status, with its seats, indoor/outdoor and who is currently
+/// seated there when known. Tapping a card opens a sheet to change its status
+/// or start a new order.
+///
+/// With [canManage] (managers and administrators) the page also shows an
+/// "Add table" button, and the sheet gets an "Edit table" button to change a
+/// table's number, seats and indoor/outdoor. The server enforces the same rule
+/// (see tableRoutes.js), so cashiers cannot add or edit tables either way.
 class TablesManagementPage extends StatefulWidget {
-  const TablesManagementPage({super.key});
+  final bool canManage;
+  const TablesManagementPage({super.key, this.canManage = false});
 
   @override
   State<TablesManagementPage> createState() => _TablesManagementPageState();
@@ -97,7 +111,59 @@ class _TablesManagementPageState extends State<TablesManagementPage> {
     }
   }
 
+  void _snack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   int _count(String status) => _tables.where((t) => t['status'] == status).length;
+
+  // ---- add / edit ----
+
+  Future<void> _addTable() async {
+    final result = await showDialog<_TableFormResult>(
+      context: context,
+      builder: (_) => const _TableFormDialog(),
+    );
+    if (result == null || !mounted) return;
+    try {
+      await _repo.create(
+        tableNumber: result.tableNumber,
+        capacity: result.capacity,
+        location: result.location,
+      );
+      await _load(showSpinner: false);
+      _snack('Table ${result.tableNumber} added.');
+    } on ApiException catch (e) {
+      _snack(e.message);
+    } catch (e) {
+      _snack('Could not add the table: $e');
+    }
+  }
+
+  Future<void> _editTable(Map<String, dynamic> table) async {
+    final result = await showDialog<_TableFormResult>(
+      context: context,
+      builder: (_) => _TableFormDialog(table: table),
+    );
+    if (result == null || !mounted) return;
+    try {
+      await _repo.update(
+        table['table_id'] as int,
+        tableNumber: result.tableNumber,
+        capacity: result.capacity,
+        location: result.location,
+      );
+      await _load(showSpinner: false);
+      _snack('Table ${result.tableNumber} updated.');
+    } on ApiException catch (e) {
+      _snack(e.message);
+    } catch (e) {
+      _snack('Could not update the table: $e');
+    }
+  }
+
+  // ---- open a table ----
 
   Future<void> _openTable(Map<String, dynamic> table) async {
     final action = await showModalBottomSheet<_TableSheetResult>(
@@ -105,9 +171,14 @@ class _TablesManagementPageState extends State<TablesManagementPage> {
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => _TableDetailSheet(table: table),
+      builder: (_) => _TableDetailSheet(table: table, canManage: widget.canManage),
     );
     if (action == null || !mounted) return;
+
+    if (action.edit) {
+      await _editTable(table);
+      return;
+    }
 
     if (action.newOrder) {
       await Navigator.of(context).push(
@@ -126,13 +197,9 @@ class _TablesManagementPageState extends State<TablesManagementPage> {
       try {
         await _repo.setStatus(table['table_id'] as int, action.status!);
         await _load(showSpinner: false);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Table ${table['table_number']} marked ${action.status}.')),
-          );
-        }
+        _snack('Table ${table['table_number']} marked ${action.status}.');
       } catch (e) {
-        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e')));
+        _snack('$e');
       }
     }
   }
@@ -171,22 +238,49 @@ class _TablesManagementPageState extends State<TablesManagementPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Wrap(
-                  spacing: 10,
-                  runSpacing: 8,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _SummaryBadge(label: '${_tables.length} total', color: _Ui.muted),
-                    for (final status in _statusOrder)
-                      if (status != 'cleaning' || _count(status) > 0)
-                        _SummaryBadge(label: '${_count(status)} ${status}', color: _styleFor(status).text),
+                    Expanded(
+                      child: Wrap(
+                        spacing: 10,
+                        runSpacing: 8,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _SummaryBadge(label: '${_tables.length} total', color: _Ui.muted),
+                          for (final status in _statusOrder)
+                            if (status != 'cleaning' || _count(status) > 0)
+                              _SummaryBadge(label: '${_count(status)} $status', color: _styleFor(status).text),
+                        ],
+                      ),
+                    ),
+                    if (widget.canManage) ...[
+                      const SizedBox(width: 12),
+                      ElevatedButton.icon(
+                        onPressed: _addTable,
+                        icon: const Icon(Icons.add, size: 18),
+                        label: const Text('Add table'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _Ui.tanDeep,
+                          foregroundColor: Colors.white,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 20),
                 if (_tables.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 48),
-                    child: Center(child: Text('No tables yet.', style: TextStyle(color: _Ui.muted))),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 48),
+                    child: Center(
+                      child: Text(
+                        widget.canManage ? 'No tables yet. Tap "Add table" to create one.' : 'No tables yet.',
+                        style: const TextStyle(color: _Ui.muted),
+                      ),
+                    ),
                   )
                 else
                   GridView.builder(
@@ -275,7 +369,14 @@ class _TableCard extends StatelessWidget {
                 children: [
                   const Icon(Icons.people_outline, size: 14, color: _Ui.muted),
                   const SizedBox(width: 4),
-                  Text('${table['capacity']} seats', style: const TextStyle(fontSize: 12, color: _Ui.muted)),
+                  Expanded(
+                    child: Text(
+                      '${table['capacity']} seats · ${_locationLabel(table['location'])}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 12, color: _Ui.muted),
+                    ),
+                  ),
                 ],
               ),
               if (name != null && name.isNotEmpty) ...[
@@ -291,27 +392,163 @@ class _TableCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
+// Add / edit table form
+// ---------------------------------------------------------------------------
+
+class _TableFormResult {
+  final String tableNumber;
+  final int capacity;
+  final String location; // indoor | outdoor
+  const _TableFormResult(this.tableNumber, this.capacity, this.location);
+}
+
+class _TableFormDialog extends StatefulWidget {
+  /// The table being edited, or null to add a new one.
+  final Map<String, dynamic>? table;
+  const _TableFormDialog({this.table});
+
+  @override
+  State<_TableFormDialog> createState() => _TableFormDialogState();
+}
+
+class _TableFormDialogState extends State<_TableFormDialog> {
+  final _formKey = GlobalKey<FormState>();
+  late final TextEditingController _number;
+  late final TextEditingController _seats;
+  late String _location;
+
+  bool get _editing => widget.table != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final t = widget.table;
+    _number = TextEditingController(text: t == null ? '' : '${t['table_number']}');
+    _seats = TextEditingController(text: t == null ? '' : '${t['capacity']}');
+    final loc = '${t?['location'] ?? 'indoor'}'.trim().toLowerCase();
+    _location = loc == 'outdoor' ? 'outdoor' : 'indoor';
+  }
+
+  @override
+  void dispose() {
+    _number.dispose();
+    _seats.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (!_formKey.currentState!.validate()) return;
+    Navigator.of(context).pop(
+      _TableFormResult(_number.text.trim(), int.parse(_seats.text.trim()), _location),
+    );
+  }
+
+  InputDecoration _decoration(String label, {String? hint}) => InputDecoration(
+        labelText: label,
+        hintText: hint,
+        filled: true,
+        fillColor: const Color(0xFFFBF5F0),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(_editing ? 'Edit table' : 'Add table'),
+      content: SizedBox(
+        width: 340,
+        child: Form(
+          key: _formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              TextFormField(
+                controller: _number,
+                autofocus: !_editing,
+                textCapitalization: TextCapitalization.characters,
+                decoration: _decoration('Table number', hint: 'e.g. T7'),
+                validator: (v) => (v ?? '').trim().isEmpty ? 'Enter a table number' : null,
+              ),
+              const SizedBox(height: 14),
+              TextFormField(
+                controller: _seats,
+                keyboardType: TextInputType.number,
+                decoration: _decoration('Seats', hint: 'e.g. 4'),
+                validator: (v) {
+                  final n = int.tryParse((v ?? '').trim());
+                  if (n == null || n < 1) return 'Enter 1 or more seats';
+                  if (n > 99) return 'That is too many seats';
+                  return null;
+                },
+                onFieldSubmitted: (_) => _submit(),
+              ),
+              const SizedBox(height: 18),
+              const Text('Location', style: TextStyle(fontSize: 13, color: _Ui.muted)),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'indoor', label: Text('Indoor'), icon: Icon(Icons.meeting_room_outlined, size: 18)),
+                    ButtonSegment(value: 'outdoor', label: Text('Outdoor'), icon: Icon(Icons.deck_outlined, size: 18)),
+                  ],
+                  selected: {_location},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (s) => setState(() => _location = s.first),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        ElevatedButton(
+          onPressed: _submit,
+          style: ElevatedButton.styleFrom(
+            backgroundColor: _Ui.tanDeep,
+            foregroundColor: Colors.white,
+            elevation: 0,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+          ),
+          child: Text(_editing ? 'Save' : 'Add table'),
+        ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Table detail sheet
 // ---------------------------------------------------------------------------
 
 class _TableSheetResult {
   final String? status;
   final bool newOrder;
-  const _TableSheetResult.status(this.status) : newOrder = false;
+  final bool edit;
+  const _TableSheetResult.status(this.status)
+      : newOrder = false,
+        edit = false;
   const _TableSheetResult.newOrder()
       : status = null,
-        newOrder = true;
+        newOrder = true,
+        edit = false;
+  const _TableSheetResult.edit()
+      : status = null,
+        newOrder = false,
+        edit = true;
 }
 
 class _TableDetailSheet extends StatelessWidget {
   final Map<String, dynamic> table;
-  const _TableDetailSheet({required this.table});
+  final bool canManage;
+  const _TableDetailSheet({required this.table, required this.canManage});
 
   @override
   Widget build(BuildContext context) {
     final status = '${table['status']}';
     final style = _styleFor(status);
-    final location = (table['location'] as String?)?.trim();
 
     return SafeArea(
       child: Padding(
@@ -341,8 +578,7 @@ class _TableDetailSheet extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '${table['capacity']} seats'
-              '${location != null && location.isNotEmpty ? ' · ${_titleCase(location)}' : ''}',
+              '${table['capacity']} seats · ${_locationLabel(table['location'])}',
               style: const TextStyle(fontSize: 13, color: _Ui.muted),
             ),
             const SizedBox(height: 22),
@@ -375,6 +611,22 @@ class _TableDetailSheet extends StatelessWidget {
                 ),
               ),
             ),
+            if (canManage) ...[
+              const SizedBox(height: 10),
+              SizedBox(
+                height: 46,
+                child: OutlinedButton.icon(
+                  onPressed: () => Navigator.of(context).pop(const _TableSheetResult.edit()),
+                  icon: const Icon(Icons.edit_outlined, size: 18),
+                  label: const Text('Edit table'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: _Ui.tanDeep,
+                    side: const BorderSide(color: _Ui.tanDeep),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),

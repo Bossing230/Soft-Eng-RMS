@@ -34,6 +34,20 @@ String _itemStation(Map<String, dynamic> item) {
 List<Map<String, dynamic>> _itemsFor(Map<String, dynamic> order, String stationKey) =>
     _asList(order['items']).where((i) => _itemStation(i) == stationKey).toList();
 
+/// A stock item is ready-made (e.g. a bottled Coca-Cola): anything on the
+/// Drinks or Counter station. There is nothing to cook, so it counts as ready
+/// as soon as the kitchen starts the order.
+bool _isStock(Map<String, dynamic> item) {
+  final station = _itemStation(item);
+  return station == 'drinks' || station == 'counter';
+}
+
+/// An order made only of stock items needs no cooking at all.
+bool _isStockOnly(Map<String, dynamic> order) {
+  final items = _asList(order['items']);
+  return items.isNotEmpty && items.every(_isStock);
+}
+
 // Stations this app understands — must match Backend/constants/stations.js.
 const _stationIcons = {
   'grill': Icons.local_fire_department_outlined,
@@ -560,13 +574,19 @@ class _OrderCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final status = '${order['order_status']}';
-    final style = _cardStatusStyle(status);
+    final rawStatus = '${order['order_status']}';
     final items = stationKey == null ? _asList(order['items']) : _itemsFor(order, stationKey!);
+    final started = rawStatus != 'confirmed'; // the kitchen has started this order
+    // In a station tab, a card made only of stock items (no recipe) is ready
+    // as soon as the kitchen starts the order, instead of showing "Cooking".
+    final stockReady = stationKey != null && rawStatus == 'preparing' && items.isNotEmpty && items.every(_isStock);
+    final status = stockReady ? 'ready' : rawStatus;
+    final style = _cardStatusStyle(status);
     final itemsText = items.map((i) {
       final base = '${i['quantity']}× ${i['food_name']}';
-      if (stationKey != null) return base;
-      return '$base (${_capitalize(_itemStation(i))})';
+      final ready = _isStock(i) && started ? ' · Ready' : '';
+      if (stationKey != null) return '$base$ready';
+      return '$base (${_capitalize(_itemStation(i))}$ready)';
     }).join(', ');
     final tableNumber = order['table_number'] as String?;
 
@@ -647,16 +667,27 @@ class _OrderDetailPanel extends StatelessWidget {
     final totalItems = items.fold<int>(0, (sum, i) => sum + _asNum(i['quantity']).toInt());
 
     final stageIndex = _trackStages.indexOf(status); // -1 while still 'confirmed'
+    // An order made only of stock items (no recipe) needs no cooking; the
+    // backend moves it straight to Ready when "Start Preparing" is tapped.
+    final stockOnly = _isStockOnly(order);
     final nextAction = allowedNext.contains('preparing')
         ? ('preparing', 'Start Preparing')
         : allowedNext.contains('ready')
             ? ('ready', 'Mark as Ready')
             : null;
 
+    final minutesAgo = _asNum(order['minutes_ago']).toInt();
     final cookingMinutes = _asNum(order['cooking_minutes'] ?? order['minutes_ago']).toInt();
-    final elapsedLabel = order['prep_started_at'] != null
-        ? (cookingMinutes < 1 ? 'Just started cooking' : 'Cooking for ${_elapsedLabel(cookingMinutes)}')
-        : 'Waiting to start · ${_elapsedLabel(_asNum(order['minutes_ago']).toInt())} in queue';
+    final String elapsedLabel;
+    if (stockOnly) {
+      elapsedLabel = status == 'confirmed'
+          ? 'Stock items only · ${_elapsedLabel(minutesAgo)} in queue'
+          : 'Stock items · no cooking needed';
+    } else if (order['prep_started_at'] != null) {
+      elapsedLabel = cookingMinutes < 1 ? 'Just started cooking' : 'Cooking for ${_elapsedLabel(cookingMinutes)}';
+    } else {
+      elapsedLabel = 'Waiting to start · ${_elapsedLabel(minutesAgo)} in queue';
+    }
 
     return SingleChildScrollView(
       controller: scrollController,
@@ -701,6 +732,14 @@ class _OrderDetailPanel extends StatelessWidget {
                     _capitalize(_itemStation(item)),
                     style: const TextStyle(fontSize: 11, color: _Ui.muted),
                   ),
+                  if (_isStock(item) && status != 'confirmed') ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(color: const Color(0xFFE8F5E9), borderRadius: BorderRadius.circular(10)),
+                      child: const Text('Ready', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: _Ui.greenText)),
+                    ),
+                  ],
                 ],
               ),
             ),
