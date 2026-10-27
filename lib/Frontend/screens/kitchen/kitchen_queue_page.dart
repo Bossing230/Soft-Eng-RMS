@@ -112,14 +112,16 @@ String _agoLabel(int minutes) => minutes < 1 ? 'just now' : '${_elapsedLabel(min
 
 String _money(num v) => '₱${v.toStringAsFixed(2)}';
 
+String _capitalize(String s) => s.isEmpty ? s : s[0].toUpperCase() + s.substring(1);
+
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
-/// Kitchen Orders board: active orders grouped by station, with a detail
-/// panel for whichever order is selected. An order that has items for several
-/// stations (for example food and a drink) shows up under each of them, and
-/// each card lists only that station's items.
+/// Kitchen Orders board. The "All Orders" tab shows every active order as a
+/// single combined card (listing all of its items, each tagged with its
+/// station). Selecting a station tab shows only the orders that have items
+/// for that station, and each card lists only that station's items.
 ///
 /// Kitchen staff can start cooking and mark an order ready; moving it on to
 /// served/completed is the cashier's job (see the backend's TRANSITIONS
@@ -216,8 +218,8 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  /// Orders shown for the selected station tab: every order that has at least
-  /// one item for that station.
+  /// Orders shown for the selected tab: every order for "All Orders", or every
+  /// order that has at least one item for the selected station.
   List<Map<String, dynamic>> get _visibleOrders {
     if (_selectedStation == 'all') return _orders;
     return _orders.where((o) => _itemsFor(o, _selectedStation).isNotEmpty).toList();
@@ -326,10 +328,14 @@ class _KitchenQueuePageState extends State<KitchenQueuePage> {
             children: [
               Expanded(
                 child: _visibleOrders.isEmpty
-                    ? const Center(child: Text('No orders for this station right now.', style: TextStyle(color: _Ui.muted)))
-                    : _StationBoard(
+                    ? Center(
+                        child: Text(
+                          _selectedStation == 'all' ? 'No orders right now.' : 'No orders for this station right now.',
+                          style: const TextStyle(color: _Ui.muted),
+                        ),
+                      )
+                    : _OrderBoard(
                         orders: _visibleOrders,
-                        stations: _selectedStation == 'all' ? _stations : null,
                         selectedStation: _selectedStation,
                         selectedOrderId: wide ? _selectedOrderId : null,
                         onTap: (id) => _selectOrder(id),
@@ -428,8 +434,8 @@ class _StationTabs extends StatelessWidget {
         child: Row(
           children: [
             _Pill(
-              icon: null,
-              label: 'All Stations',
+              icon: Icons.receipt_long_outlined,
+              label: 'All Orders',
               count: totalActive,
               selected: selected == 'all',
               onTap: () => onSelected('all'),
@@ -500,21 +506,16 @@ class _Pill extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Station board (multi-column) / single list
+// Order board: one combined grid of order cards
 // ---------------------------------------------------------------------------
 
-class _StationBoard extends StatelessWidget {
+class _OrderBoard extends StatelessWidget {
   final List<Map<String, dynamic>> orders;
-
-  /// When set, orders are split into one column per station (the "All
-  /// Stations" view); otherwise they're a single list (one station selected).
-  final List<Map<String, dynamic>>? stations;
   final String selectedStation;
   final int? selectedOrderId;
   final ValueChanged<int> onTap;
-  const _StationBoard({
+  const _OrderBoard({
     required this.orders,
-    required this.stations,
     required this.selectedStation,
     required this.selectedOrderId,
     required this.onTap,
@@ -522,97 +523,27 @@ class _StationBoard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (stations == null) {
-      return ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          for (final o in orders)
-            _OrderCard(
-              order: o,
-              stationKey: selectedStation,
-              selected: o['order_id'] == selectedOrderId,
-              onTap: () => onTap(o['order_id'] as int),
-            ),
-        ],
-      );
-    }
+    // "All Orders" -> null, so each card lists every item of the order.
+    final stationKey = selectedStation == 'all' ? null : selectedStation;
 
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
+    return GridView.builder(
       padding: const EdgeInsets.all(16),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (final s in stations!)
-            Padding(
-              padding: const EdgeInsets.only(right: 16),
-              child: _StationColumn(
-                station: s,
-                orders: orders.where((o) => _itemsFor(o, '${s['key']}').isNotEmpty).toList(),
-                selectedOrderId: selectedOrderId,
-                onTap: onTap,
-              ),
-            ),
-        ],
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 320,
+        mainAxisExtent: 150,
+        crossAxisSpacing: 12,
+        mainAxisSpacing: 12,
       ),
-    );
-  }
-}
-
-class _StationColumn extends StatelessWidget {
-  final Map<String, dynamic> station;
-  final List<Map<String, dynamic>> orders;
-  final int? selectedOrderId;
-  final ValueChanged<int> onTap;
-  const _StationColumn({required this.station, required this.orders, required this.selectedOrderId, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    final openCount = orders.where((o) => o['order_status'] != 'completed').length;
-
-    return SizedBox(
-      width: 230,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(_stationIcons['${station['key']}'], size: 16, color: _Ui.tanDeep),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  '${station['label']}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: _Ui.ink),
-                ),
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(color: _Ui.tanTint, borderRadius: BorderRadius.circular(10)),
-                child: Text('$openCount', style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: _Ui.tanDeep)),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          if (orders.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Text('Nothing here.', style: TextStyle(fontSize: 12, color: _Ui.muted)),
-            )
-          else
-            for (final o in orders)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _OrderCard(
-                  order: o,
-                  stationKey: '${station['key']}',
-                  selected: o['order_id'] == selectedOrderId,
-                  onTap: () => onTap(o['order_id'] as int),
-                ),
-              ),
-        ],
-      ),
+      itemCount: orders.length,
+      itemBuilder: (_, i) {
+        final o = orders[i];
+        return _OrderCard(
+          order: o,
+          stationKey: stationKey,
+          selected: o['order_id'] == selectedOrderId,
+          onTap: () => onTap(o['order_id'] as int),
+        );
+      },
     );
   }
 }
@@ -620,7 +551,8 @@ class _StationColumn extends StatelessWidget {
 class _OrderCard extends StatelessWidget {
   final Map<String, dynamic> order;
 
-  /// When set, the card lists only this station's items.
+  /// When set, the card lists only this station's items. When null (the
+  /// "All Orders" tab) it lists every item, each tagged with its station.
   final String? stationKey;
   final bool selected;
   final VoidCallback onTap;
@@ -631,7 +563,11 @@ class _OrderCard extends StatelessWidget {
     final status = '${order['order_status']}';
     final style = _cardStatusStyle(status);
     final items = stationKey == null ? _asList(order['items']) : _itemsFor(order, stationKey!);
-    final itemsText = items.map((i) => '${i['quantity']}× ${i['food_name']}').join(', ');
+    final itemsText = items.map((i) {
+      final base = '${i['quantity']}× ${i['food_name']}';
+      if (stationKey != null) return base;
+      return '$base (${_capitalize(_itemStation(i))})';
+    }).join(', ');
     final tableNumber = order['table_number'] as String?;
 
     return Material(
@@ -667,13 +603,15 @@ class _OrderCard extends StatelessWidget {
                 style: const TextStyle(fontSize: 11, color: _Ui.muted),
               ),
               const SizedBox(height: 6),
-              Text(
-                itemsText,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12, color: _Ui.ink, height: 1.3),
+              Expanded(
+                child: Text(
+                  itemsText,
+                  maxLines: 3,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, color: _Ui.ink, height: 1.3),
+                ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Row(
                 children: [
                   const Icon(Icons.access_time, size: 12, color: _Ui.muted),
@@ -760,7 +698,7 @@ class _OrderDetailPanel extends StatelessWidget {
                   const SizedBox(width: 8),
                   Expanded(child: Text('${item['food_name']}', style: const TextStyle(fontSize: 13, color: _Ui.ink))),
                   Text(
-                    _itemStation(item)[0].toUpperCase() + _itemStation(item).substring(1),
+                    _capitalize(_itemStation(item)),
                     style: const TextStyle(fontSize: 11, color: _Ui.muted),
                   ),
                 ],
