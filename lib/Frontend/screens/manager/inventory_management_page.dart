@@ -34,7 +34,7 @@ class _Ui {
 /// Ingredients measured by weight or volume use g / ml (not kg / L) so recipes
 /// can use small amounts like 30 g. A tablespoon (tbsp, about 15 ml) suits oil,
 /// vinegar, soy sauce and similar. Countable things use pcs, pack, can, etc.
-const _units = ['g', 'ml', 'tbsp', 'pcs', 'pack', 'can', 'bottle', 'box', 'sack'];
+const _units = ['g', 'ml', 'tbsp', 'clove', 'pcs', 'pack', 'can', 'bottle', 'box', 'sack'];
 const _categories = [
   'Meat',
   'Seafood',

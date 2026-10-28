@@ -8,6 +8,13 @@ import 'package:rms/Frontend/core/theme/app_theme.dart';
 /// Backspace handling lives on each FocusNode (FocusNode.onKeyEvent). Never
 /// wrap a TextField in a KeyboardListener that reuses the same FocusNode: it
 /// nests the node inside itself and freezes the page.
+///
+/// Do not use a LayoutBuilder in [build]. This widget is shown inside an
+/// AlertDialog (the new-employee dialog), and AlertDialog measures its content
+/// with IntrinsicWidth. LayoutBuilder cannot answer that measurement, so in a
+/// debug build (flutter run) it throws, the dialog turns blank, and the app
+/// ends on the red "'_owner != null'" screen. Release builds (the website) skip
+/// that check, which is why it only showed up on the phone.
 class OtpBoxes extends StatefulWidget {
   final int length;
   final bool enabled;
@@ -102,47 +109,48 @@ class _OtpBoxesState extends State<OtpBoxes> {
   Widget build(BuildContext context) {
     final errorColor = Theme.of(context).colorScheme.error;
     const gap = 8.0;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        // Shrink the boxes on narrow dialogs so six of them always fit.
-        final available = constraints.maxWidth.isFinite ? constraints.maxWidth : 400.0;
-        final boxWidth = ((available - gap * (widget.length - 1)) / widget.length).clamp(30.0, 44.0);
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            for (var i = 0; i < widget.length; i++) ...[
-              if (i > 0) const SizedBox(width: gap),
-              SizedBox(
-                width: boxWidth,
-                height: 54,
-                child: TextField(
-                  controller: _controllers[i],
-                  focusNode: _focusNodes[i],
-                  enabled: widget.enabled,
-                  autofocus: i == 0,
-                  textAlign: TextAlign.center,
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly,
-                    LengthLimitingTextInputFormatter(widget.length), // lets a full code be pasted into one box
-                  ],
-                  decoration: InputDecoration(
-                    counterText: '',
-                    contentPadding: EdgeInsets.zero,
-                    filled: true,
-                    fillColor: AppTheme.background,
-                    enabledBorder: _border(widget.hasError ? errorColor : Colors.black26, 1.2),
-                    disabledBorder: _border(Colors.black12, 1.2),
-                    focusedBorder: _border(widget.hasError ? errorColor : AppTheme.primary, 2),
-                  ),
-                  onChanged: (v) => _onChanged(i, v),
+    const boxWidth = 44.0;
+
+    // Fixed-size boxes inside a FittedBox: on a narrow dialog the whole row
+    // scales down to fit, so six boxes always fit, and (unlike LayoutBuilder)
+    // it can be measured by the dialog's IntrinsicWidth.
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < widget.length; i++) ...[
+            if (i > 0) const SizedBox(width: gap),
+            SizedBox(
+              width: boxWidth,
+              height: 54,
+              child: TextField(
+                controller: _controllers[i],
+                focusNode: _focusNodes[i],
+                enabled: widget.enabled,
+                autofocus: i == 0,
+                textAlign: TextAlign.center,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(widget.length), // lets a full code be pasted into one box
+                ],
+                decoration: InputDecoration(
+                  counterText: '',
+                  contentPadding: EdgeInsets.zero,
+                  filled: true,
+                  fillColor: AppTheme.background,
+                  enabledBorder: _border(widget.hasError ? errorColor : Colors.black26, 1.2),
+                  disabledBorder: _border(Colors.black12, 1.2),
+                  focusedBorder: _border(widget.hasError ? errorColor : AppTheme.primary, 2),
                 ),
+                onChanged: (v) => _onChanged(i, v),
               ),
-            ],
+            ),
           ],
-        );
-      },
+        ],
+      ),
     );
   }
 }

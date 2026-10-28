@@ -6,6 +6,12 @@ class AppTheme {
   static const Color secondary = Color(0xFF2E5339); // deep green accent
   static const Color background = Color(0xFFFAF7F2);
 
+  /// Noto Sans, bundled with the app (see pubspec.yaml, assets/fonts) instead of
+  /// the phone's own font. Some phones use a custom system font that has no peso
+  /// sign, which showed up as an empty box. Noto Sans has it, so the app looks
+  /// the same on every phone.
+  static const String fontFamily = 'NotoSans';
+
   static ThemeData light() {
     final colorScheme = ColorScheme.fromSeed(
       seedColor: primary,
@@ -15,6 +21,7 @@ class AppTheme {
 
     return ThemeData(
       useMaterial3: true,
+      fontFamily: fontFamily,
       colorScheme: colorScheme,
       scaffoldBackgroundColor: background,
       appBarTheme: const AppBarTheme(

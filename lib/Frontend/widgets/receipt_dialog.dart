@@ -16,7 +16,7 @@ const _feedbackUrl = 'https://docs.google.com/forms/d/e/1FAIpQLSdOUkjV0gaSTJEf1Q
 const _ink = Color(0xFF111111);
 const _muted = Color(0xFF6B6B6B);
 const _paper = Color(0xFFFAFAF8);
-const _mono = TextStyle(fontFamily: 'Courier New', fontFamilyFallback: ['monospace', 'Roboto'], color: _ink);
+const _mono = TextStyle(fontFamily: 'Courier New', fontFamilyFallback: ['monospace', 'NotoSans'], color: _ink);
 
 final _money = NumberFormat('#,##0.00');
 String _peso(num v) => '₱${_money.format(v)}';
