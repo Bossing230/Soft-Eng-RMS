@@ -194,27 +194,40 @@ class _RoleScaffoldState extends State<RoleScaffold> {
         const SizedBox(height: 28),
         const Divider(height: 1),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.symmetric(vertical: 8),
-            itemCount: widget.items.length,
-            itemBuilder: (_, i) {
-              final item = widget.items[i];
-              final selected = i == _selected;
-              return Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-                child: ListTile(
-                  leading: Icon(item.icon, color: selected ? primary : Colors.grey[700]),
-                  title: Text(item.label, style: TextStyle(color: selected ? primary : Colors.black87, fontWeight: selected ? FontWeight.w600 : FontWeight.normal)),
-                  selected: selected,
-                  selectedTileColor: primary.withOpacity(0.08),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                  onTap: () {
-                    _selectTab(i);
-                    if (isDrawer) Navigator.of(context).maybePop();
-                  },
-                ),
-              );
-            },
+          // FIX: the list gets its own transparent Material so the tiles'
+          // selected highlight is painted (and clipped) inside the list area
+          // instead of on the Drawer behind the header.
+          child: Material(
+            type: MaterialType.transparency,
+            clipBehavior: Clip.hardEdge,
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              itemCount: widget.items.length,
+              itemBuilder: (_, i) {
+                final item = widget.items[i];
+                final selected = i == _selected;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+                  child: ListTile(
+                    leading: Icon(item.icon, color: selected ? primary : Colors.grey[700]),
+                    title: Text(
+                      item.label,
+                      style: TextStyle(
+                        color: selected ? primary : Colors.black87,
+                        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                      ),
+                    ),
+                    selected: selected,
+                    selectedTileColor: primary.withOpacity(0.08),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    onTap: () {
+                      _selectTab(i);
+                      if (isDrawer) Navigator.of(context).maybePop();
+                    },
+                  ),
+                );
+              },
+            ),
           ),
         ),
         const Divider(height: 1),

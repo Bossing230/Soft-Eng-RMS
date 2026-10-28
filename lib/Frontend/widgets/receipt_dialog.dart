@@ -5,9 +5,9 @@ import 'package:intl/intl.dart';
 import '../models/order.dart';
 
 // Edit these to match your restaurant.
-const _restaurantName = 'Restaurant Management System';
+const _restaurantName = 'D Hermanos Pizza';
 const _tagline = 'Good food. Good times.';
-const _addressLine1 = 'Barangay 2';
+const _addressLine1 = 'Upper Maloro';
 const _addressLine2 = 'Tangub City, Misamis Occidental, Philippines';
 
 // Paste your Google Form link here. Leave it empty to hide the QR code.

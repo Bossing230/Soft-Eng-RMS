@@ -463,7 +463,7 @@ class _AddMenuItemPageState extends State<AddMenuItemPage> {
                 const SizedBox(height: 16),
                 TextField(
                   controller: _priceCtrl,
-                  decoration: const InputDecoration(labelText: 'Price', prefixIcon: Icon(Icons.attach_money)),
+                  decoration: const InputDecoration(labelText: 'Price', prefixIcon: Icon(Icons.currency_lira),),
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
                   onChanged: (_) => setState(() {}), // keeps the recipe's margin hint current
                 ),
