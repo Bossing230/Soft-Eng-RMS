@@ -122062,7 +122062,7 @@ a3N(a){var s,r=this,q=null,p=r.c
 p.toString
 p=A.G(p)
 s=t.p
-return A.a1(A.b([B.qC,A.ak(A.b([A.baN("assets/images/logo-1.png",80)],s),B.k,B.d7,B.i,0,q),B.ah,new A.a5(B.ky,A.m("D Hermanos",q,q,q,q,B.ad8,B.Y,q,q),q),B.Hm,B.uA,A.aI(A.cp(!1,B.A,!0,q,A.bbn(new A.aWT(r,p.ax.b,a),r.a.d.length,B.f8),B.q,q,0,q,q,q,q,q,B.da),1),B.uA,new A.a5(B.cx,A.bd(A.jH(B.UE,B.I9,r.ganP(),A.qB(q,q,q,q,q,q,q,q,q,B.b1,q,q,q,q,q,new A.aV(B.tK,1,B.E,-1),q,q,q,q)),q,1/0),q)],s),B.k,B.e,B.i,0,B.j)},
+return A.a1(A.b([B.qC,A.ak(A.b([A.baN("assets/images/logo-1.png",80)],s),B.k,B.d7,B.i,0,q),B.ah,new A.a5(B.ky,A.m("D Hermanos Pizza",q,q,q,q,B.ad8,B.Y,q,q),q),B.Hm,B.uA,A.aI(A.cp(!1,B.A,!0,q,A.bbn(new A.aWT(r,p.ax.b,a),r.a.d.length,B.f8),B.q,q,0,q,q,q,q,q,B.da),1),B.uA,new A.a5(B.cx,A.bd(A.jH(B.UE,B.I9,r.ganP(),A.qB(q,q,q,q,q,q,q,q,q,B.b1,q,q,q,q,q,new A.aV(B.tK,1,B.E,-1),q,q,q,q)),q,1/0),q)],s),B.k,B.e,B.i,0,B.j)},
 a1x(){var s=this,r=null,q=s.ga4N()
 return A.zS(r,!0,new A.SK(A.m(""+s.ga4N(),r,r,r,r,r,r,r,r),q>0,B.TJ,r),r,new A.aWM(s),B.n,r,r,new A.aWN(s),B.ch,"Notifications",t.S)},
 XF(){var s,r,q,p=this,o=null,n=$.cW(),m=p.c
@@ -123112,7 +123112,7 @@ A(a){var s,r,q,p,o,n,m,l,k,j=this,i=null,h=j.c,g=h.c,f=h.d,e=B.c.aB(f==null?"":f
 if(c==null)c=d
 f=A.m("D Hermanos Pizza",i,i,i,i,B.bX.rm(20,B.kO),B.Y,i,i)
 s=A.m("Good food. Good times.",i,i,i,i,B.bX.ps(B.nx,12),B.Y,i,i)
-r=A.m("Upper Maloro",i,i,i,i,B.bX.pq(12),B.Y,i,i)
+r=A.m("Upper Maloro,",i,i,i,i,B.bX.pq(12),B.Y,i,i)
 q=A.m("Tangub City, Misamis Occidental, Philippines",i,i,i,i,B.bX.pq(12),B.Y,i,i)
 p=j.lv("Order No:","#"+B.c.dT(B.f.k(h.a),4,"0"))
 o=j.lv("Date & Time:",A.d8("MMM d, y  h:mm a").aW(h.b))
@@ -123717,7 +123717,7 @@ s=$.cW()
 if(s.a!=null&&s.f!=null){r=s.f
 r.toString
 q=A.b8T(r)}else q=B.ll
-return A.bbu(!1,q,A.b8W(),"Restaurant Management System")}}
+return A.bbu(!1,q,A.b8W(),"D Hermanos Pizza")}}
 A.aWx.prototype={
 $0(){return this.a.d=!0},
 $S:0}
