@@ -45,7 +45,7 @@ class _RmsAppState extends State<RmsApp> {
         : const LoginScreen();
 
     return MaterialApp(
-      title: 'D Hermanos Pizza',
+      title: 'Restaurant Management System',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.light(),
       home: home,

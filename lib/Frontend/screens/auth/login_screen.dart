@@ -100,12 +100,12 @@ class _LoginScreenState extends State<LoginScreen> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Image.asset('assets/images/logo-1.png', height: 200),
-                    ],
+                    // children: [
+                    //   Image.asset('assets/images/logo-1.png', height: 200),
+                    // ],
                   ),
                   const SizedBox(height: 12),
-                  Text('D Hermanos Pizza',
+                  Text('Restaurant Management System',
                       textAlign: TextAlign.center, style: Theme.of(context).textTheme.headlineSmall),
                   const SizedBox(height: 32),
                   TextFormField(

@@ -12,7 +12,7 @@ class AppConstants {
     defaultValue: 'https://soft-eng-rms-backend.onrender.com',
   );
 
-  static const String appName = 'D Hermanos Pizza';
+  static const String appName = 'Restaurant Management System';
 
   // Role identifiers — must match backend `roles.role_name` values.
   static const String roleAdmin = 'administrator';
