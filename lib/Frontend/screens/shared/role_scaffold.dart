@@ -178,9 +178,9 @@ class _RoleScaffoldState extends State<RoleScaffold> {
         const SizedBox(height: 32),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Image.asset('assets/images/logo-1.png', height: 80),
-          ],
+          // children: [
+          //   Image.asset('assets/images/logo-1.png', height: 80),
+          // ],
         ),
         const SizedBox(height: 12),
         Padding(
