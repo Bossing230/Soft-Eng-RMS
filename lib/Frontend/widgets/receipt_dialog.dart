@@ -7,7 +7,7 @@ import '../models/order.dart';
 // Edit these to match your restaurant.
 const _restaurantName = 'Restaurant Management System';
 const _tagline = 'Good food. Good times.';
-const _addressLine1 = 'Upper Maloro,';
+// const _addressLine1 = 'Upper Maloro,';
 const _addressLine2 = 'Tangub City, Misamis Occidental, Philippines';
 
 // Paste your Google Form link here. Leave it empty to hide the QR code.
@@ -167,7 +167,7 @@ class _Paper extends StatelessWidget {
           const SizedBox(height: 4),
           Text(_tagline, textAlign: TextAlign.center, style: _mono.copyWith(fontSize: 12, color: _muted)),
           const SizedBox(height: 10),
-          Text(_addressLine1, textAlign: TextAlign.center, style: _mono.copyWith(fontSize: 12)),
+          // Text(_addressLine1, textAlign: TextAlign.center, style: _mono.copyWith(fontSize: 12)),
           Text(_addressLine2, textAlign: TextAlign.center, style: _mono.copyWith(fontSize: 12)),
           _solid(),
           _row('Order No:', '#${d.orderId.toString().padLeft(4, '0')}'),
