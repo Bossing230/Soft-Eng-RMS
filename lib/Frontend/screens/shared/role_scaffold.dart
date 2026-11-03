@@ -438,7 +438,7 @@ class _RoleScaffoldState extends State<RoleScaffold> {
       );
     }
 
-    return Scaffold(
+        return Scaffold(
       appBar: AppBar(
         title: Text(_topTitle),
         actions: [
@@ -450,12 +450,18 @@ class _RoleScaffoldState extends State<RoleScaffold> {
       ),
       drawer: Drawer(child: SafeArea(child: _sidebarContent(isDrawer: true))),
       body: body,
-      bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selected,
-        type: BottomNavigationBarType.fixed,
-        onTap: _selectTab,
-        items: widget.items.map((item) => BottomNavigationBarItem(icon: Icon(item.icon), label: item.label)).toList(),
-      ),
+      // A BottomNavigationBar needs at least 2 items. Roles with a single
+      // tab (e.g. Kitchen) don't need a bottom bar at all.
+      bottomNavigationBar: widget.items.length >= 2
+          ? BottomNavigationBar(
+              currentIndex: _selected,
+              type: BottomNavigationBarType.fixed,
+              onTap: _selectTab,
+              items: widget.items
+                  .map((item) => BottomNavigationBarItem(icon: Icon(item.icon), label: item.label))
+                  .toList(),
+            )
+          : null,
     );
   }
 }
