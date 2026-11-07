@@ -5,9 +5,9 @@ import 'package:rms/Frontend/services/file_download.dart';
 class ReportExportRepository {
   final ApiService _api = ApiService();
 
-  /// [report] is 'sales', 'inventory' or 'expenses'. [format] is 'pdf',
-  /// 'excel' or 'csv'. [start] / [end] apply to sales and expenses.
-  /// Returns false if downloading isn't supported on this platform.
+  /// [report] is 'sales' or 'inventory'. [format] is 'pdf', 'excel' or 'csv'.
+  /// [start] / [end] apply to the sales report.
+  /// Returns false if downloading isn't supported on this platform yet.
   Future<bool> download({
     required String report,
     required String format,

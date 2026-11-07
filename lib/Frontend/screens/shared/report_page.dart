@@ -4,6 +4,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../repositories/dashboard_repository.dart';
+import '../../widgets/sales_report_dialog.dart';
 
 // ---------------------------------------------------------------------------
 // Design tokens, taken from the reports design.
@@ -179,9 +180,28 @@ class _ReportsPageState extends State<ReportsPage> {
                 constraints: const BoxConstraints(maxWidth: 1200),
                 child: Column(
                   children: [
-                    Align(
+                                        Align(
                       alignment: Alignment.centerRight,
-                      child: _PeriodPills(selected: _period, onChanged: _setPeriod),
+                      child: Wrap(
+                        alignment: WrapAlignment.end,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 12,
+                        runSpacing: 10,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => showSalesReportDialog(context),
+                            icon: const Icon(Icons.download_outlined, size: 18),
+                            label: const Text('Download Report'),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: _Ui.tanDeep,
+                              side: const BorderSide(color: _Ui.tan),
+                              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                            ),
+                          ),
+                          _PeriodPills(selected: _period, onChanged: _setPeriod),
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 16),
                     _content(),

@@ -5,9 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:rms/Frontend/models/inventory.dart';
-import 'package:rms/Frontend/models/supplier.dart';
-import 'package:rms/Frontend/patterns/singleton/session_manager.dart';
-import 'package:rms/Frontend/repositories/supplier_repository.dart';
+
 import '../../core/constants/app_constants.dart';
 import '../../repositories/inventory_repository.dart';
 
@@ -33,9 +31,6 @@ class _Ui {
 }
 
 /// Standard choices, so "g", "G" and "grams" don't become three different units.
-/// Ingredients measured by weight or volume use g / ml (not kg / L) so recipes
-/// can use small amounts like 30 g. A tablespoon (tbsp, about 15 ml) suits oil,
-/// vinegar, soy sauce and similar. Countable things use pcs, pack, can, etc.
 const _units = ['g', 'ml', 'tbsp', 'clove', 'pcs', 'pack', 'can', 'bottle', 'box', 'sack'];
 const _categories = [
   'Meat',
@@ -88,9 +83,7 @@ class _SeverityStyle {
   const _SeverityStyle(this.bg, this.fg, this.dot, this.label);
 }
 
-/// The four-state display bucket (ok/low/critical/out). The stock-change
-/// alerts and restock logic still use the item's 3-state `status`; this is
-/// only for how a row or chip is colored and labeled.
+/// The four-state display bucket (ok/low/critical/out).
 _SeverityStyle _severityStyle(String severity) {
   switch (severity) {
     case 'out':
@@ -144,8 +137,7 @@ const _itemsPerPage = 8;
 // Item photos
 // ---------------------------------------------------------------------------
 
-/// Turns what the server stored into a link the app can load. Photos kept on
-/// Cloudinary are already full links; older ones are a path on our own server.
+/// Turns what the server stored into a link the app can load.
 String? _fullImageUrl(String? path) {
   if (path == null || path.isEmpty) return null;
   if (path.startsWith('http')) return path;
@@ -153,16 +145,14 @@ String? _fullImageUrl(String? path) {
   return '$base$path';
 }
 
-/// Lets the person choose a photo from their device. Returns null if they
-/// cancel.
+/// Lets the person choose a photo from their device. Returns null if they cancel.
 Future<(XFile, Uint8List)?> _pickPhoto() async {
   final file = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 1000);
   if (file == null) return null;
   return (file, await file.readAsBytes());
 }
 
-/// The item's photo in a rounded square, or its category icon if it has none
-/// (or the photo can't be loaded).
+/// The item's photo in a rounded square, or its category icon if it has none.
 class _ItemThumb extends StatelessWidget {
   final InventoryItem item;
   final double size;
@@ -194,8 +184,17 @@ class _ItemThumb extends StatelessWidget {
 // Page
 // ---------------------------------------------------------------------------
 
+/// The inventory page.
+///
+///  * [kitchenMode] = false (manager / admin): focuses only on the ingredients:
+///    the list with stats, search and categories, view and edit, delete, and
+///    Download Report.
+///  * [kitchenMode] = true (kitchen): the hands-on stock work: add ingredients,
+///    record deliveries, usage and waste, correct counts, plus Stock Overview,
+///    Recent Activity and the Action Needed card.
 class InventoryManagementPage extends StatefulWidget {
-  const InventoryManagementPage({super.key});
+  final bool kitchenMode;
+  const InventoryManagementPage({super.key, this.kitchenMode = false});
 
   @override
   State<InventoryManagementPage> createState() => _InventoryManagementPageState();
@@ -213,10 +212,8 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   String _query = '';
   int _page = 0;
   bool _downloadingReport = false;
-  bool _showArchived = false; // false = the normal list, true = archived items
-  // Kitchen staff can add and update ingredients. Only the manager and
-  // administrator can archive, delete or download reports.
-  bool get _canManage => SessionManager().role != AppConstants.roleKitchen;
+
+  bool get _kitchen => widget.kitchenMode;
 
   @override
   void initState() {
@@ -238,7 +235,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
       });
     }
     try {
-      final results = await Future.wait([_repo.getAll(archived: _showArchived), _repo.getOverview()]);
+      final results = await Future.wait([_repo.getAll(), _repo.getOverview()]);
       if (!mounted) return;
       setState(() {
         _items = results[0] as List<InventoryItem>;
@@ -265,7 +262,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   List<InventoryItem> get _filtered {
     final q = _query.trim().toLowerCase();
     final list = _items.where((i) {
-      if (!_showArchived && _categoryFilter != 'All') {
+      if (_categoryFilter != 'All') {
         final category = i.category.isEmpty ? 'Uncategorized' : i.category;
         if (category != _categoryFilter) return false;
       }
@@ -299,8 +296,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   // ---- actions ----
 
   // The add / edit form is a full page (not a dialog) because it has a photo
-  // picker: the native file picker can crash a modal dialog on Flutter Web
-  // (the same reason the menu's "Add Item" is a page).
+  // picker: the native file picker can crash a modal dialog on Flutter Web.
   Future<void> _openAddItem() async {
     final created = await Navigator.of(context).push<InventoryItem>(
       MaterialPageRoute(builder: (_) => _ItemFormPage(repo: _repo)),
@@ -333,83 +329,15 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
     }
   }
 
-  /// Switches between the normal list and the archived items.
-  void _toggleArchived() {
-    setState(() {
-      _showArchived = !_showArchived;
-      _page = 0;
-      _query = '';
-      _categoryFilter = 'All';
-      _searchController.clear();
-    });
-    _load();
-  }
-
-  Future<void> _archiveItem(InventoryItem item) async {
+  Future<void> _deleteItem(InventoryItem item) async {
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: _Ui.dialogBg,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Archive ${item.ingredientName}?', style: const TextStyle(fontSize: 18)),
+        title: Text('Delete ${item.ingredientName}?', style: const TextStyle(fontSize: 18)),
         content: const Text(
-          'It will disappear from the inventory list, stock alerts, totals and reports. '
-          'Its history is kept, and you can restore it any time from the Archived list.',
-          style: TextStyle(fontSize: 13.5, color: _Ui.muted),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: _Ui.tanDeep, foregroundColor: Colors.white),
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('Archive'),
-          ),
-        ],
-      ),
-    );
-    if (ok != true) return;
-
-    try {
-      await _repo.setArchived(item.inventoryId, true);
-      await _load(showSpinner: false);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('${item.ingredientName} archived.'),
-          action: SnackBarAction(label: 'Undo', onPressed: () => _restoreItem(item, quiet: true)),
-        ),
-      );
-    } catch (e) {
-      _snack('$e');
-    }
-  }
-
-  Future<void> _restoreItem(InventoryItem item, {bool quiet = false}) async {
-    try {
-      await _repo.setArchived(item.inventoryId, false);
-      await _load(showSpinner: false);
-      if (!quiet) _snack('${item.ingredientName} restored.');
-    } catch (e) {
-      _snack('$e');
-    }
-  }
-
-  Future<void> _openDetail(InventoryItem item) {
-    return showDialog<void>(
-      context: context,
-      builder: (_) => _ItemDetailDialog(item: item, repo: _repo, onChanged: () => _load(showSpinner: false)),
-    );
-  }
-
-    Future<void> _deleteItem(InventoryItem item) async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: _Ui.dialogBg,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Text('Delete ${item.ingredientName} permanently?', style: const TextStyle(fontSize: 18)),
-        content: const Text(
-          'This removes the item and its whole stock history. This cannot be undone.',
+          'This permanently removes the ingredient and its stock history. This cannot be undone.',
           style: TextStyle(fontSize: 13.5, color: _Ui.muted),
         ),
         actions: [
@@ -433,6 +361,18 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
     }
   }
 
+  Future<void> _openDetail(InventoryItem item) {
+    return showDialog<void>(
+      context: context,
+      builder: (_) => _ItemDetailDialog(
+        item: item,
+        repo: _repo,
+        canAdjust: _kitchen,
+        onChanged: () => _load(showSpinner: false),
+      ),
+    );
+  }
+
   Future<void> _quickDelivery(InventoryItem item) async {
     final qty = await _promptQuantity(
       context,
@@ -452,7 +392,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   }
 
   /// What the "Current view" option of the report means right now, or null
-  /// when no category or search is active (then it would just be "All items").
+  /// when no category or search is active.
   String? get _viewLabel {
     final parts = <String>[
       if (_categoryFilter != 'All') _categoryFilter,
@@ -463,10 +403,6 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
 
   Future<void> _downloadReport() async {
     if (_downloadingReport) return;
-    if (_showArchived) {
-      _snack('The report covers active items. Go back to the inventory to download it.');
-      return;
-    }
 
     final choice = await showDialog<_ReportChoice>(
       context: context,
@@ -516,15 +452,18 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _PageHeader(
-                      onAdd: _openAddItem,
-                      onDownload: _downloadReport,
+                      title: _kitchen ? 'Stock' : 'Inventory',
+                      subtitle: _kitchen
+                          ? 'Add ingredients and record deliveries, usage and waste'
+                          : 'The ingredients we have and how much is left',
+                      onAdd: _kitchen ? _openAddItem : null,
+                      onDownload: _kitchen ? null : _downloadReport,
                       downloading: _downloadingReport,
-                      showDownload: _canManage,
                     ),
                     const SizedBox(height: 16),
                     if (overview != null) _StatCardsRow(overview: overview),
                     const SizedBox(height: 16),
-                    if (wide)
+                    if (wide && _kitchen)
                       Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -535,8 +474,10 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
                       )
                     else ...[
                       _itemsPanel(overview),
-                      const SizedBox(height: 16),
-                      _sidebar(overview),
+                      if (_kitchen) ...[
+                        const SizedBox(height: 16),
+                        _sidebar(overview),
+                      ],
                     ],
                   ],
                 ),
@@ -557,22 +498,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Text(
-                _showArchived ? 'Archived items' : 'Inventory Items',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _Ui.ink),
-              ),
-              const Spacer(),
-                if (_canManage && (_showArchived || (overview?.archivedCount ?? 0) > 0))
-                TextButton.icon(
-                  onPressed: _toggleArchived,
-                  icon: Icon(_showArchived ? Icons.arrow_back : Icons.archive_outlined, size: 16),
-                  label: Text(_showArchived ? 'Back to inventory' : 'Archived (${overview?.archivedCount ?? 0})'),
-                  style: TextButton.styleFrom(foregroundColor: _Ui.tanDeep),
-                ),
-            ],
-          ),
+          const Text('Ingredients', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _Ui.ink)),
           const SizedBox(height: 12),
           TextField(
             controller: _searchController,
@@ -592,7 +518,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
             ),
           ),
           const SizedBox(height: 12),
-          if (overview != null && !_showArchived)
+          if (overview != null)
             _CategoryPills(
               totalItems: overview.totalItems,
               categories: overview.categories,
@@ -601,7 +527,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
             ),
           const SizedBox(height: 14),
           if (filtered.isEmpty)
-            _EmptyState(hasItems: _items.isNotEmpty, archived: _showArchived)
+            _EmptyState(hasItems: _items.isNotEmpty, canAdd: _kitchen)
           else ...[
             _ItemsTableHeader(),
             for (final item in pageItems)
@@ -609,12 +535,9 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
                 item: item,
                 onTap: () => _openDetail(item),
                 onEdit: () => _editItem(item),
-                onChangePhoto: () => _changePhoto(item),
-                onAddDelivery: !_showArchived && item.needsRestock ? () => _quickDelivery(item) : null,
-                canArchive: _canManage,
-                onArchive: () => _archiveItem(item),
-                onRestore: _showArchived ? () => _restoreItem(item) : null,
-                onDelete: _showArchived ? () => _deleteItem(item) : null,
+                onChangePhoto: _kitchen ? () => _changePhoto(item) : null,
+                onAddDelivery: _kitchen ? () => _quickDelivery(item) : null,
+                onDelete: _kitchen ? null : () => _deleteItem(item),
               ),
             const SizedBox(height: 10),
             _Pagination(
@@ -655,11 +578,18 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
 // ---------------------------------------------------------------------------
 
 class _PageHeader extends StatelessWidget {
-  final VoidCallback onAdd;
-  final VoidCallback onDownload;
+  final String title;
+  final String subtitle;
+  final VoidCallback? onAdd;
+  final VoidCallback? onDownload;
   final bool downloading;
-  final bool showDownload;
-  const _PageHeader({required this.onAdd, required this.onDownload, required this.downloading, this.showDownload = true});
+  const _PageHeader({
+    required this.title,
+    required this.subtitle,
+    required this.onAdd,
+    required this.onDownload,
+    required this.downloading,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -672,12 +602,14 @@ class _PageHeader extends StatelessWidget {
           child: const Icon(Icons.inventory_2_outlined, color: Colors.white, size: 24),
         ),
         const SizedBox(width: 14),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Inventory', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: _Ui.ink)),
-            Text('Track stock, monitor usage and avoid waste', style: TextStyle(fontSize: 12, color: _Ui.muted)),
-          ],
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: _Ui.ink)),
+              Text(subtitle, style: const TextStyle(fontSize: 12, color: _Ui.muted)),
+            ],
+          ),
         ),
       ],
     );
@@ -686,32 +618,33 @@ class _PageHeader extends StatelessWidget {
       spacing: 10,
       runSpacing: 10,
       children: [
-        if (showDownload)
-        OutlinedButton.icon(
-          onPressed: downloading ? null : onDownload,
-          icon: downloading
-              ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Icon(Icons.download_outlined, size: 18),
-          label: const Text('Download Report'),
-          style: OutlinedButton.styleFrom(
-            foregroundColor: _Ui.tanDeep,
-            side: const BorderSide(color: _Ui.tan),
-            padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        if (onDownload != null)
+          OutlinedButton.icon(
+            onPressed: downloading ? null : onDownload,
+            icon: downloading
+                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.download_outlined, size: 18),
+            label: const Text('Download Report'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: _Ui.tanDeep,
+              side: const BorderSide(color: _Ui.tan),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
-        ),
-        ElevatedButton.icon(
-          onPressed: onAdd,
-          icon: const Icon(Icons.add, size: 18),
-          label: const Text('Add Item'),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _Ui.tanDeep,
-            foregroundColor: Colors.white,
-            elevation: 0,
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        if (onAdd != null)
+          ElevatedButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('Add Item'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _Ui.tanDeep,
+              foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            ),
           ),
-        ),
       ],
     );
 
@@ -1067,28 +1000,18 @@ class _ItemRow extends StatelessWidget {
   final InventoryItem item;
   final VoidCallback onTap;
   final VoidCallback onEdit;
-  final VoidCallback onChangePhoto;
+
+  /// The next three only show up in the ⋮ menu when they are given.
+  final VoidCallback? onChangePhoto;
   final VoidCallback? onAddDelivery;
-  final VoidCallback onArchive;
-
-  /// Set only when the row is in the Archived list: the only action is then "Restore".
-  final VoidCallback? onRestore;
-
-  /// "Delete permanently", shown only in the Archived list.
   final VoidCallback? onDelete;
-
-  /// False for kitchen staff, who can't archive.
-  final bool canArchive;
   const _ItemRow({
     required this.item,
     required this.onTap,
     required this.onEdit,
-    required this.onChangePhoto,
-    required this.onAddDelivery,
-    required this.onArchive,
-    required this.onRestore,
+    this.onChangePhoto,
+    this.onAddDelivery,
     this.onDelete,
-    this.canArchive = true,
   });
 
   @override
@@ -1112,30 +1035,23 @@ class _ItemRow extends StatelessWidget {
       onSelected: (v) {
         if (v == 'open') onTap();
         if (v == 'edit') onEdit();
-        if (v == 'photo') onChangePhoto();
+        if (v == 'photo' && onChangePhoto != null) onChangePhoto!();
         if (v == 'delivery' && onAddDelivery != null) onAddDelivery!();
-        if (v == 'archive') onArchive();
-        if (v == 'restore' && onRestore != null) onRestore!();
         if (v == 'delete' && onDelete != null) onDelete!();
       },
-      itemBuilder: (_) => onRestore != null
-          ? [
-              const PopupMenuItem(value: 'restore', child: Text('Restore')),
-              if (onDelete != null) const PopupMenuItem(value: 'delete', child: Text('Delete permanently')),
-            ]
-          : [
-              const PopupMenuItem(value: 'open', child: Text('View details')),
-              const PopupMenuItem(value: 'edit', child: Text('Edit item')),
-              PopupMenuItem(value: 'photo', child: Text(item.hasImage ? 'Change photo' : 'Add photo')),
-              if (onAddDelivery != null) const PopupMenuItem(value: 'delivery', child: Text('Add delivery')),
-              if (canArchive) const PopupMenuItem(value: 'archive', child: Text('Archive')),
-            ],
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'open', child: Text('View details')),
+        const PopupMenuItem(value: 'edit', child: Text('Edit item')),
+        if (onChangePhoto != null) PopupMenuItem(value: 'photo', child: Text(item.hasImage ? 'Change photo' : 'Add photo')),
+        if (onAddDelivery != null) const PopupMenuItem(value: 'delivery', child: Text('Add delivery')),
+        if (onDelete != null) const PopupMenuItem(value: 'delete', child: Text('Delete')),
+      ],
     );
 
     return Material(
       color: Colors.white,
       child: InkWell(
-        onTap: onRestore != null ? null : onTap,
+        onTap: onTap,
         borderRadius: BorderRadius.circular(10),
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
@@ -1251,7 +1167,7 @@ class _Pagination extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar: Stock Overview donut
+// Kitchen sidebar: Stock Overview donut
 // ---------------------------------------------------------------------------
 
 class _StockOverviewCard extends StatelessWidget {
@@ -1319,7 +1235,7 @@ class _StockOverviewCard extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar: Recent Activity
+// Kitchen sidebar: Recent Activity
 // ---------------------------------------------------------------------------
 
 class _RecentActivityCard extends StatelessWidget {
@@ -1357,10 +1273,10 @@ class _ActivityRow extends StatelessWidget {
         : entry.type == 'waste'
             ? (entry.reason.isEmpty ? 'written off as waste' : 'wasted (${entry.reason.toLowerCase()})')
             : entry.type == 'usage'
-            ? (entry.orderId != null ? 'used for order #${entry.orderId}' : 'used from inventory')
-            : entry.type == 'return'
-                ? (entry.orderId != null ? 'returned from order #${entry.orderId}' : 'returned to inventory')
-                : 'stock adjusted';
+                ? (entry.orderId != null ? 'used for order #${entry.orderId}' : 'used from inventory')
+                : entry.type == 'return'
+                    ? (entry.orderId != null ? 'returned from order #${entry.orderId}' : 'returned to inventory')
+                    : 'stock adjusted';
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1396,7 +1312,7 @@ class _ActivityRow extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar: Action Needed
+// Kitchen sidebar: Action Needed
 // ---------------------------------------------------------------------------
 
 class _ActionNeededCard extends StatelessWidget {
@@ -1414,10 +1330,10 @@ class _ActionNeededCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            children: [
-              const Icon(Icons.priority_high_rounded, size: 18, color: _Ui.amberText),
-              const SizedBox(width: 8),
-              const Text('Action Needed', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _Ui.amberText)),
+            children: const [
+              Icon(Icons.priority_high_rounded, size: 18, color: _Ui.amberText),
+              SizedBox(width: 8),
+              Text('Action Needed', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: _Ui.amberText)),
             ],
           ),
           const SizedBox(height: 8),
@@ -1475,8 +1391,8 @@ class _SidebarCard extends StatelessWidget {
 
 class _EmptyState extends StatelessWidget {
   final bool hasItems;
-  final bool archived;
-  const _EmptyState({required this.hasItems, this.archived = false});
+  final bool canAdd;
+  const _EmptyState({required this.hasItems, required this.canAdd});
 
   @override
   Widget build(BuildContext context) {
@@ -1484,9 +1400,9 @@ class _EmptyState extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 48),
       child: Center(
         child: Text(
-          archived
-              ? (hasItems ? 'No archived items match your search.' : 'Nothing is archived.')
-              : (hasItems ? 'No items match your search or filter.' : 'No inventory items yet. Tap "Add Item" to start.'),
+          hasItems
+              ? 'No items match your search or filter.'
+              : (canAdd ? 'No ingredients yet. Tap "Add Item" to start.' : 'No ingredients yet. The kitchen adds them.'),
           style: const TextStyle(color: _Ui.muted),
         ),
       ),
@@ -1768,34 +1684,12 @@ class _ItemFormPageState extends State<_ItemFormPage> {
   String? _phoneError;
   String? _error;
   bool _saving = false;
-  List<Supplier> _suppliers = [];
 
   bool get _editing => widget.existing != null;
-
-  Future<void> _loadSuppliers() async {
-    try {
-      final list = await SupplierRepository().getAll();
-      if (mounted) setState(() => _suppliers = list);
-    } catch (_) {
-      // The picker is optional: the text fields below still work without it.
-    }
-  }
-
-  /// Picking a supplier fills in the name and phone fields.
-  void _pickSupplier(String? name) {
-    if (name == null) return;
-    final match = _suppliers.where((s) => s.name == name);
-    if (match.isEmpty) return;
-    setState(() {
-      _supplier.text = match.first.name;
-      _phone.text = match.first.phone ?? '';
-    });
-  }
 
   @override
   void initState() {
     super.initState();
-    _loadSuppliers();
     _unit = widget.existing?.unit;
     _location = widget.existing?.storageLocation;
     final category = widget.existing?.category ?? '';
@@ -2122,14 +2016,6 @@ class _ItemFormPageState extends State<_ItemFormPage> {
       ),
       _textField(_cost, 'Cost per unit (optional)', icon: Icons.payments_outlined, error: _costError, number: true),
       _expiryField(),
-      if (_suppliers.isNotEmpty)
-        _dropdown(
-          hint: 'Pick a saved supplier',
-          value: null,
-          options: _suppliers.map((s) => s.name).toList(),
-          error: null,
-          onChanged: _pickSupplier,
-        ),
       _textField(_supplier, 'Supplier (optional)', icon: Icons.local_shipping_outlined),
       _textField(_phone, 'Supplier phone (optional)', icon: Icons.phone_outlined, error: _phoneError),
     ];
@@ -2243,14 +2129,18 @@ class _ItemFormPageState extends State<_ItemFormPage> {
 }
 
 // ---------------------------------------------------------------------------
-// Item detail: actions and stock history
+// Item detail: stock history, plus the stock actions when [canAdjust]
 // ---------------------------------------------------------------------------
 
 class _ItemDetailDialog extends StatefulWidget {
   final InventoryItem item;
   final InventoryRepository repo;
+
+  /// True for kitchen staff: shows Add delivery, Record usage, Record waste
+  /// and Correct count. Managers only see the item, its history and Edit.
+  final bool canAdjust;
   final VoidCallback onChanged;
-  const _ItemDetailDialog({required this.item, required this.repo, required this.onChanged});
+  const _ItemDetailDialog({required this.item, required this.repo, required this.canAdjust, required this.onChanged});
 
   @override
   State<_ItemDetailDialog> createState() => _ItemDetailDialogState();
@@ -2494,30 +2384,32 @@ class _ItemDetailDialogState extends State<_ItemDetailDialog> {
                 spacing: 8,
                 runSpacing: 8,
                 children: [
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _delivery,
-                    icon: const Icon(Icons.add_circle_outline, size: 18),
-                    label: const Text('Add delivery'),
-                    style: actionStyle,
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _usage,
-                    icon: const Icon(Icons.remove_circle_outline, size: 18),
-                    label: const Text('Record usage'),
-                    style: actionStyle,
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _waste,
-                    icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                    label: const Text('Record waste'),
-                    style: actionStyle,
-                  ),
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _correctCount,
-                    icon: const Icon(Icons.tune, size: 18),
-                    label: const Text('Correct count'),
-                    style: actionStyle,
-                  ),
+                  if (widget.canAdjust) ...[
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : _delivery,
+                      icon: const Icon(Icons.add_circle_outline, size: 18),
+                      label: const Text('Add delivery'),
+                      style: actionStyle,
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : _usage,
+                      icon: const Icon(Icons.remove_circle_outline, size: 18),
+                      label: const Text('Record usage'),
+                      style: actionStyle,
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : _waste,
+                      icon: const Icon(Icons.delete_sweep_outlined, size: 18),
+                      label: const Text('Record waste'),
+                      style: actionStyle,
+                    ),
+                    OutlinedButton.icon(
+                      onPressed: _busy ? null : _correctCount,
+                      icon: const Icon(Icons.tune, size: 18),
+                      label: const Text('Correct count'),
+                      style: actionStyle,
+                    ),
+                  ],
                   OutlinedButton.icon(
                     onPressed: _busy ? null : _edit,
                     icon: const Icon(Icons.edit_outlined, size: 18),

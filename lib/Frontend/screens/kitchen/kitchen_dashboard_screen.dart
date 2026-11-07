@@ -12,7 +12,12 @@ class KitchenDashboardScreen extends StatelessWidget {
       title: 'Kitchen',
       items: [
         RoleNavItem(label: 'Queue', icon: Icons.soup_kitchen, page: KitchenQueuePage()),
-        RoleNavItem(label: 'Inventory', icon: Icons.inventory_2_outlined, page: InventoryManagementPage()),
+        RoleNavItem(
+          label: 'Stock',
+          icon: Icons.inventory_2_outlined,
+          pageTitle: 'Kitchen Stock',
+          page: InventoryManagementPage(kitchenMode: true),
+        ),
       ],
     );
   }
