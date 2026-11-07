@@ -7,6 +7,8 @@ import '../shared/tables_management_page.dart';
 import 'manager_overview_page.dart';
 import 'inventory_management_page.dart';
 import '../shared/reservation_page.dart';
+import '../shared/suppliers_page.dart';
+import '../shared/expenses_page.dart';
 
 class ManagerDashboardScreen extends StatelessWidget {
   const ManagerDashboardScreen({super.key});
@@ -23,6 +25,8 @@ class ManagerDashboardScreen extends StatelessWidget {
         RoleNavItem(label: 'Menu', icon: Icons.restaurant_menu, page: MenuManagementPage()),
         RoleNavItem(label: 'Inventory', icon: Icons.inventory_2, page: InventoryManagementPage()),
         RoleNavItem(label: 'Reports', icon: Icons.bar_chart, page: ReportsPage()),
+        RoleNavItem(label: 'Suppliers', icon: Icons.local_shipping_outlined, page: SuppliersPage()),
+        RoleNavItem(label: 'Expenses', icon: Icons.receipt_long_outlined, page: ExpensesPage()),
       ],
     );
   }

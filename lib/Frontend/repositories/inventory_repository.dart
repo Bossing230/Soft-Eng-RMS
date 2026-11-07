@@ -147,6 +147,10 @@ class InventoryRepository {
     });
   }
 
+  /// Permanently deletes an ARCHIVED item and its history.
+  Future<void> deletePermanently(int inventoryId) {
+    return _api.post('/inventory/$inventoryId/delete', body: {});
+  }
   /// Downloads the inventory report.
   ///   [format]   'pdf', 'excel' or 'csv'
   ///   [filter]   'all', 'low' (low, critical and out of stock) or 'expiring'

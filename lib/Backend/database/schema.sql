@@ -208,3 +208,28 @@ CREATE TABLE IF NOT EXISTS attendance (
 -- The default administrator account is created by running `npm run seed`
 -- (see database/seed.js) so the password is hashed correctly with bcrypt
 -- instead of a hardcoded hash sitting in version control.
+
+CREATE TABLE IF NOT EXISTS suppliers (
+  supplier_id INT AUTO_INCREMENT PRIMARY KEY,
+  name VARCHAR(100) NOT NULL UNIQUE,
+  contact_person VARCHAR(100) NULL,
+  phone VARCHAR(30) NULL,
+  email VARCHAR(100) NULL,
+  address VARCHAR(255) NULL,
+  notes VARCHAR(500) NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS expenses (
+  expense_id INT AUTO_INCREMENT PRIMARY KEY,
+  expense_date DATE NOT NULL,
+  category VARCHAR(50) NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  amount DECIMAL(10,2) NOT NULL,
+  supplier_id INT NULL,
+  recorded_by INT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(supplier_id) ON DELETE SET NULL,
+  FOREIGN KEY (recorded_by) REFERENCES employees(employee_id),
+  INDEX idx_expense_date (expense_date)
+);

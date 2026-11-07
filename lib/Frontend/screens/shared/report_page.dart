@@ -1,9 +1,8 @@
 import 'dart:math' as math;
-
+import '../../widgets/report_export_panel.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
 import '../../repositories/dashboard_repository.dart';
 
 // ---------------------------------------------------------------------------
@@ -233,6 +232,8 @@ class _ReportsPageState extends State<ReportsPage> {
         _VolumePanel(buckets: visible, type: type, period: _period, hasSales: hasSales),
         const SizedBox(height: 16),
         _TopItemsPanel(items: _asList(d['topItems']), period: _period),
+        const SizedBox(height: 16),
+        const ReportExportPanel(),
       ],
     );
   }

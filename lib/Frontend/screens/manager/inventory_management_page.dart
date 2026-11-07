@@ -5,7 +5,9 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:intl/intl.dart';
 import 'package:rms/Frontend/models/inventory.dart';
-
+import 'package:rms/Frontend/models/supplier.dart';
+import 'package:rms/Frontend/patterns/singleton/session_manager.dart';
+import 'package:rms/Frontend/repositories/supplier_repository.dart';
 import '../../core/constants/app_constants.dart';
 import '../../repositories/inventory_repository.dart';
 
@@ -212,6 +214,9 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
   int _page = 0;
   bool _downloadingReport = false;
   bool _showArchived = false; // false = the normal list, true = archived items
+  // Kitchen staff can add and update ingredients. Only the manager and
+  // administrator can archive, delete or download reports.
+  bool get _canManage => SessionManager().role != AppConstants.roleKitchen;
 
   @override
   void initState() {
@@ -396,6 +401,38 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
     );
   }
 
+    Future<void> _deleteItem(InventoryItem item) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _Ui.dialogBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text('Delete ${item.ingredientName} permanently?', style: const TextStyle(fontSize: 18)),
+        content: const Text(
+          'This removes the item and its whole stock history. This cannot be undone.',
+          style: TextStyle(fontSize: 13.5, color: _Ui.muted),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: _Ui.redText, foregroundColor: Colors.white),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true) return;
+
+    try {
+      await _repo.deletePermanently(item.inventoryId);
+      await _load(showSpinner: false);
+      _snack('${item.ingredientName} deleted.');
+    } catch (e) {
+      _snack('$e');
+    }
+  }
+
   Future<void> _quickDelivery(InventoryItem item) async {
     final qty = await _promptQuantity(
       context,
@@ -478,7 +515,12 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    _PageHeader(onAdd: _openAddItem, onDownload: _downloadReport, downloading: _downloadingReport),
+                    _PageHeader(
+                      onAdd: _openAddItem,
+                      onDownload: _downloadReport,
+                      downloading: _downloadingReport,
+                      showDownload: _canManage,
+                    ),
                     const SizedBox(height: 16),
                     if (overview != null) _StatCardsRow(overview: overview),
                     const SizedBox(height: 16),
@@ -522,7 +564,7 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _Ui.ink),
               ),
               const Spacer(),
-              if (_showArchived || (overview?.archivedCount ?? 0) > 0)
+                if (_canManage && (_showArchived || (overview?.archivedCount ?? 0) > 0))
                 TextButton.icon(
                   onPressed: _toggleArchived,
                   icon: Icon(_showArchived ? Icons.arrow_back : Icons.archive_outlined, size: 16),
@@ -569,8 +611,10 @@ class _InventoryManagementPageState extends State<InventoryManagementPage> {
                 onEdit: () => _editItem(item),
                 onChangePhoto: () => _changePhoto(item),
                 onAddDelivery: !_showArchived && item.needsRestock ? () => _quickDelivery(item) : null,
+                canArchive: _canManage,
                 onArchive: () => _archiveItem(item),
                 onRestore: _showArchived ? () => _restoreItem(item) : null,
+                onDelete: _showArchived ? () => _deleteItem(item) : null,
               ),
             const SizedBox(height: 10),
             _Pagination(
@@ -614,7 +658,8 @@ class _PageHeader extends StatelessWidget {
   final VoidCallback onAdd;
   final VoidCallback onDownload;
   final bool downloading;
-  const _PageHeader({required this.onAdd, required this.onDownload, required this.downloading});
+  final bool showDownload;
+  const _PageHeader({required this.onAdd, required this.onDownload, required this.downloading, this.showDownload = true});
 
   @override
   Widget build(BuildContext context) {
@@ -641,6 +686,7 @@ class _PageHeader extends StatelessWidget {
       spacing: 10,
       runSpacing: 10,
       children: [
+        if (showDownload)
         OutlinedButton.icon(
           onPressed: downloading ? null : onDownload,
           icon: downloading
@@ -1027,6 +1073,12 @@ class _ItemRow extends StatelessWidget {
 
   /// Set only when the row is in the Archived list: the only action is then "Restore".
   final VoidCallback? onRestore;
+
+  /// "Delete permanently", shown only in the Archived list.
+  final VoidCallback? onDelete;
+
+  /// False for kitchen staff, who can't archive.
+  final bool canArchive;
   const _ItemRow({
     required this.item,
     required this.onTap,
@@ -1035,6 +1087,8 @@ class _ItemRow extends StatelessWidget {
     required this.onAddDelivery,
     required this.onArchive,
     required this.onRestore,
+    this.onDelete,
+    this.canArchive = true,
   });
 
   @override
@@ -1062,15 +1116,19 @@ class _ItemRow extends StatelessWidget {
         if (v == 'delivery' && onAddDelivery != null) onAddDelivery!();
         if (v == 'archive') onArchive();
         if (v == 'restore' && onRestore != null) onRestore!();
+        if (v == 'delete' && onDelete != null) onDelete!();
       },
       itemBuilder: (_) => onRestore != null
-          ? const [PopupMenuItem(value: 'restore', child: Text('Restore'))]
+          ? [
+              const PopupMenuItem(value: 'restore', child: Text('Restore')),
+              if (onDelete != null) const PopupMenuItem(value: 'delete', child: Text('Delete permanently')),
+            ]
           : [
               const PopupMenuItem(value: 'open', child: Text('View details')),
               const PopupMenuItem(value: 'edit', child: Text('Edit item')),
               PopupMenuItem(value: 'photo', child: Text(item.hasImage ? 'Change photo' : 'Add photo')),
               if (onAddDelivery != null) const PopupMenuItem(value: 'delivery', child: Text('Add delivery')),
-              const PopupMenuItem(value: 'archive', child: Text('Archive')),
+              if (canArchive) const PopupMenuItem(value: 'archive', child: Text('Archive')),
             ],
     );
 
@@ -1710,12 +1768,34 @@ class _ItemFormPageState extends State<_ItemFormPage> {
   String? _phoneError;
   String? _error;
   bool _saving = false;
+  List<Supplier> _suppliers = [];
 
   bool get _editing => widget.existing != null;
+
+  Future<void> _loadSuppliers() async {
+    try {
+      final list = await SupplierRepository().getAll();
+      if (mounted) setState(() => _suppliers = list);
+    } catch (_) {
+      // The picker is optional: the text fields below still work without it.
+    }
+  }
+
+  /// Picking a supplier fills in the name and phone fields.
+  void _pickSupplier(String? name) {
+    if (name == null) return;
+    final match = _suppliers.where((s) => s.name == name);
+    if (match.isEmpty) return;
+    setState(() {
+      _supplier.text = match.first.name;
+      _phone.text = match.first.phone ?? '';
+    });
+  }
 
   @override
   void initState() {
     super.initState();
+    _loadSuppliers();
     _unit = widget.existing?.unit;
     _location = widget.existing?.storageLocation;
     final category = widget.existing?.category ?? '';
@@ -2042,6 +2122,14 @@ class _ItemFormPageState extends State<_ItemFormPage> {
       ),
       _textField(_cost, 'Cost per unit (optional)', icon: Icons.payments_outlined, error: _costError, number: true),
       _expiryField(),
+      if (_suppliers.isNotEmpty)
+        _dropdown(
+          hint: 'Pick a saved supplier',
+          value: null,
+          options: _suppliers.map((s) => s.name).toList(),
+          error: null,
+          onChanged: _pickSupplier,
+        ),
       _textField(_supplier, 'Supplier (optional)', icon: Icons.local_shipping_outlined),
       _textField(_phone, 'Supplier phone (optional)', icon: Icons.phone_outlined, error: _phoneError),
     ];

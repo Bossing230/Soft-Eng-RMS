@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../manager/inventory_management_page.dart';
 import '../shared/role_scaffold.dart';
 import 'kitchen_queue_page.dart';
 
@@ -11,6 +12,7 @@ class KitchenDashboardScreen extends StatelessWidget {
       title: 'Kitchen',
       items: [
         RoleNavItem(label: 'Queue', icon: Icons.soup_kitchen, page: KitchenQueuePage()),
+        RoleNavItem(label: 'Inventory', icon: Icons.inventory_2_outlined, page: InventoryManagementPage()),
       ],
     );
   }
