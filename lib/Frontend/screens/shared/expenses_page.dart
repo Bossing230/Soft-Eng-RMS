@@ -7,7 +7,6 @@ import 'package:rms/Frontend/repositories/report_export_repository.dart';
 import 'package:rms/Frontend/repositories/supplier_repository.dart';
 
 const _border = Color(0xFFEBE3D8);
-const _tan = Color(0xFFD4A574);
 const _tanDeep = Color(0xFFB98A5E);
 const _tanTint = Color(0xFFF0DFCF);
 const _pillIdle = Color(0xFFEFE9E0);
