@@ -23,8 +23,8 @@ class ManagerDashboardScreen extends StatelessWidget {
         RoleNavItem(label: 'Reservations', icon: Icons.event_seat, page: ReservationPage()),
         RoleNavItem(label: 'Menu', icon: Icons.restaurant_menu, page: MenuManagementPage()),
         RoleNavItem(label: 'Inventory', icon: Icons.inventory_2, page: InventoryManagementPage()),
-        RoleNavItem(label: 'Reports', icon: Icons.bar_chart, page: ReportsPage()),
         RoleNavItem(label: 'Expenses', icon: Icons.receipt_long_outlined, page: ExpensesPage()),
+        RoleNavItem(label: 'Reports', icon: Icons.bar_chart, page: ReportsPage()),
       ],
     );
   }

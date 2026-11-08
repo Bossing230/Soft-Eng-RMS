@@ -26,8 +26,8 @@ class AdminDashboardScreen extends StatelessWidget {
         RoleNavItem(label: 'Tables', icon: Icons.table_bar, page: TablesManagementPage(canManage: true)),
         RoleNavItem(label: 'Menu', icon: Icons.restaurant_menu, page: MenuManagementPage()),
         RoleNavItem(label: 'Inventory', icon: Icons.inventory_2, page: InventoryManagementPage()),
-        RoleNavItem(label: 'Reports', icon: Icons.bar_chart, page: ReportsPage()),
         RoleNavItem(label: 'Expenses', icon: Icons.receipt_long_outlined, page: ExpensesPage()),
+        RoleNavItem(label: 'Reports', icon: Icons.bar_chart, page: ReportsPage()),
       ],
     );
   }
