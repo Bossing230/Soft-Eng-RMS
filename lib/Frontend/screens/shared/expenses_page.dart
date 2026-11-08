@@ -234,6 +234,11 @@ class _ExpensesPageState extends State<ExpensesPage> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (_refreshing)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 10),
+                    child: LinearProgressIndicator(minHeight: 2, color: _tanDeep),
+                ),
                 Row(
                   children: [
                     Container(
