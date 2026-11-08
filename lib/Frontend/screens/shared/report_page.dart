@@ -162,7 +162,7 @@ class _ReportsPageState extends State<ReportsPage> {
   void _setPeriod(String period) {
     if (period == _period) return;
     setState(() => _period = period);
-    _load();
+    _load(showSpinner: false);
   }
 
   @override

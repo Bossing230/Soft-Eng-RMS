@@ -65,6 +65,8 @@ class _ExpensesPageState extends State<ExpensesPage> {
   String _period = 'month'; // 'today' | 'week' | 'month' | 'all'
   ExpenseResult? _data;
   bool _loading = true;
+  bool _refreshing = false; // a quiet reload (period change): the old list stays visible
+  int _requestId = 0; // ignores answers to requests that were superseded
   String? _error;
 
   @override
@@ -88,26 +90,37 @@ class _ExpensesPageState extends State<ExpensesPage> {
     }
   }
 
-  Future<void> _load({bool showSpinner = true}) async {
-    if (showSpinner) setState(() => _loading = true);
+    Future<void> _load({bool showSpinner = true}) async {
+    final id = ++_requestId;
+    setState(() {
+      if (showSpinner) {
+        _loading = true;
+      } else {
+        _refreshing = true;
+      }
+    });
     try {
       final r = _range;
       final data = await _repo.getAll(
         start: r.start == null ? null : _day.format(r.start!),
         end: r.end == null ? null : _day.format(r.end!),
       );
-      if (!mounted) return;
+      if (!mounted || id != _requestId) return;
       setState(() {
         _data = data;
         _loading = false;
+        _refreshing = false;
         _error = null;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || id != _requestId) return;
+      final hadData = _data != null;
       setState(() {
         _loading = false;
-        _error = e.toString();
+        _refreshing = false;
+        if (!hadData) _error = e.toString();
       });
+      if (hadData) _snack('Could not refresh: $e');
     }
   }
 
@@ -119,7 +132,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
   void _setPeriod(String p) {
     if (p == _period) return;
     setState(() => _period = p);
-    _load();
+    _load(showSpinner: false);
   }
 
   Future<void> _openForm([Expense? existing]) async {
