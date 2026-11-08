@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../repositories/dashboard_repository.dart';
 import '../../widgets/sales_report_dialog.dart';
-import '../../widgets/report_export_panel.dart';
 
 // ---------------------------------------------------------------------------
 // Design tokens, taken from the reports design.
