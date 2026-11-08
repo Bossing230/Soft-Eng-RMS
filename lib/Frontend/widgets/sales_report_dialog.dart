@@ -20,10 +20,13 @@ class _SalesReportChoice {
 }
 
 /// Opens the "Download report" dialog for the sales report, then downloads it.
-Future<void> showSalesReportDialog(BuildContext context) async {
+/// [period] is the one selected on the Reports page ('daily', 'weekly' or
+/// 'monthly'); the dialog opens on it.
+Future<void> showSalesReportDialog(BuildContext context, {String period = 'weekly'}) async {
+  final scope = period == 'daily' ? 'today' : (period == 'monthly' ? 'month' : 'week');
   final choice = await showDialog<_SalesReportChoice>(
     context: context,
-    builder: (_) => const _SalesReportDialog(),
+    builder: (_) => _SalesReportDialog(initialScope: scope),
   );
   if (choice == null || !context.mounted) return;
 
@@ -44,7 +47,8 @@ Future<void> showSalesReportDialog(BuildContext context) async {
 }
 
 class _SalesReportDialog extends StatefulWidget {
-  const _SalesReportDialog();
+  final String initialScope; // 'today' | 'week' | 'month'
+  const _SalesReportDialog({required this.initialScope});
 
   @override
   State<_SalesReportDialog> createState() => _SalesReportDialogState();
@@ -55,7 +59,7 @@ class _SalesReportDialogState extends State<_SalesReportDialog> {
   final _short = DateFormat('MMM d');
 
   String _format = 'pdf';
-  String _scope = 'week'; // 'today' | 'week' | 'month' | 'custom'
+  late String _scope = widget.initialScope; // 'today' | 'week' | 'month' | 'custom'
   DateTimeRange? _custom;
 
   DateTime get _today {
@@ -132,26 +136,26 @@ class _SalesReportDialogState extends State<_SalesReportDialog> {
                 onTap: () => setState(() => _format = 'csv'),
               ),
               const SizedBox(height: 14),
-              const Text('WHAT TO INCLUDE', style: heading),
+              const Text('PERIOD', style: heading),
               const SizedBox(height: 8),
               _OptionTile(
                 icon: Icons.today_outlined,
-                title: 'Today',
-                subtitle: _day.format(_today),
+                title: 'Daily',
+                subtitle: 'Today, ${_day.format(_today)}',
                 selected: _scope == 'today',
                 onTap: () => setState(() => _scope = 'today'),
               ),
               _OptionTile(
                 icon: Icons.view_week_outlined,
-                title: 'Last 7 days',
-                subtitle: '${_short.format(week)} – ${_day.format(_today)}',
+                title: 'Weekly',
+                subtitle: 'Last 7 days: ${_short.format(week)} – ${_day.format(_today)}',
                 selected: _scope == 'week',
                 onTap: () => setState(() => _scope = 'week'),
               ),
               _OptionTile(
                 icon: Icons.calendar_month_outlined,
-                title: 'Last 30 days',
-                subtitle: '${_short.format(month)} – ${_day.format(_today)}',
+                title: 'Monthly',
+                subtitle: 'Last 30 days: ${_short.format(month)} – ${_day.format(_today)}',
                 selected: _scope == 'month',
                 onTap: () => setState(() => _scope = 'month'),
               ),

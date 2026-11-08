@@ -189,7 +189,7 @@ class _ReportsPageState extends State<ReportsPage> {
                         runSpacing: 10,
                         children: [
                           OutlinedButton.icon(
-                            onPressed: () => showSalesReportDialog(context),
+                            onPressed: () => showSalesReportDialog(context, period: _period),
                             icon: const Icon(Icons.download_outlined, size: 18),
                             label: const Text('Download Report'),
                             style: OutlinedButton.styleFrom(
@@ -253,7 +253,7 @@ class _ReportsPageState extends State<ReportsPage> {
         const SizedBox(height: 16),
         _TopItemsPanel(items: _asList(d['topItems']), period: _period),
         const SizedBox(height: 16),
-        const ReportExportPanel(),
+        ReportExportPanel(period: _period),
       ],
     );
   }
