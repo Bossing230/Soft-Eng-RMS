@@ -6,6 +6,7 @@ import '../shared/rich_overview_page.dart';
 import '../shared/tables_management_page.dart';
 import '../manager/inventory_management_page.dart';
 import 'employee_management_page.dart';
+import '../shared/expenses_page.dart';
 
 class AdminDashboardScreen extends StatelessWidget {
   const AdminDashboardScreen({super.key});
@@ -26,6 +27,7 @@ class AdminDashboardScreen extends StatelessWidget {
         RoleNavItem(label: 'Menu', icon: Icons.restaurant_menu, page: MenuManagementPage()),
         RoleNavItem(label: 'Inventory', icon: Icons.inventory_2, page: InventoryManagementPage()),
         RoleNavItem(label: 'Reports', icon: Icons.bar_chart, page: ReportsPage()),
+        RoleNavItem(label: 'Expenses', icon: Icons.receipt_long_outlined, page: ExpensesPage()),
       ],
     );
   }

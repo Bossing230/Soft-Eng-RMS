@@ -8,8 +8,8 @@ const _tanDeep = Color(0xFFB98A5E);
 const _ink = Color(0xFF2B2B2B);
 const _muted = Color(0xFF7A7A7A);
 
-/// "Download reports" card for the Reports page: the sales and inventory
-/// reports as PDF, Excel or CSV.
+/// "Download reports" card for the Reports page: sales, inventory and
+/// expense reports as PDF, Excel or CSV.
 class ReportExportPanel extends StatefulWidget {
   const ReportExportPanel({super.key});
 
@@ -76,7 +76,7 @@ class _ReportExportPanelState extends State<ReportExportPanel> {
         children: [
           const Text('Download reports', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w500, color: _ink)),
           const SizedBox(height: 2),
-          const Text('Pick a format, and a date range for the sales report.',
+          const Text('Pick a format, and a date range for the sales and expense reports.',
               style: TextStyle(fontSize: 13, color: _muted)),
           const SizedBox(height: 14),
           Wrap(
@@ -107,10 +107,11 @@ class _ReportExportPanelState extends State<ReportExportPanel> {
             ],
           ),
           const SizedBox(height: 14),
-          _tile('sales', 'Sales report', 'Orders and total sales per day in the date range.', Icons.payments_outlined),
+          _tile('sales', 'Sales report', 'Orders and sales per day, with expenses and the difference.', Icons.payments_outlined),
           _tile('inventory', 'Inventory report', 'Current stock of every ingredient (not affected by the date range).',
               Icons.inventory_2_outlined,
               dated: false),
+          _tile('expenses', 'Expense report', 'Every recorded expense in the date range.', Icons.receipt_long_outlined),
         ],
       ),
     );
